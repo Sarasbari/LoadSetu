@@ -69,11 +69,16 @@ def run_verification():
     if shipments_res.status_code == 200:
         shipments_data = shipments_res.json()
         shipments_list = shipments_data.get("shipments", [])
+        
+        print("\n[DEBUG] Available Shipments in DB:")
+        for s in shipments_list:
+            print(f" - ID: {s.get('id')}, Status: {s.get('status')}, Route: {s.get('origin')} -> {s.get('destination')}")
+        
         if not shipments_list:
             print("[FAIL] No shipments found after confirmation.")
             return False
         
-        # Find the newly created shipment (should be shp_4)
+        # Find the newly created shipment (should be shp_4 or the highest ID)
         latest_shipment = None
         for s in shipments_list:
             if s.get("id") == "shp_4":
@@ -84,7 +89,7 @@ def run_verification():
             # Fallback to the first one in the list
             latest_shipment = shipments_list[0]
             
-        print(f"[PASS] Shipment created successfully! ID: {latest_shipment['id']}")
+        print(f"\n[PASS] Selected shipment for E2E check! ID: {latest_shipment['id']}")
         print(f"[INFO] Route: {latest_shipment['origin']} to {latest_shipment['destination']}")
         print(f"[INFO] Cargo: {latest_shipment['cargo_type']} ({latest_shipment['weight_tons']} Tons)")
         
