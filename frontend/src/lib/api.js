@@ -1,5 +1,5 @@
-const BASE_URL = 'http://localhost:8000';
-const ADMIN_TOKEN = 'secret_admin_token_2026';
+const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+const ADMIN_TOKEN = import.meta.env.VITE_ADMIN_TOKEN || 'secret_admin_token_2026';
 
 const getHeaders = () => {
   return {

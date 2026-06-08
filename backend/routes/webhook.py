@@ -144,7 +144,7 @@ def handle_new_booking(from_whatsapp: str, clean_phone: str, body: str, history:
         )
         twilio_service.send_message(from_whatsapp, clarification)
         # Keep intent as NEW_BOOKING so follow-up maintains context
-        conversation_state.update_state(clean_phone, "NEW_BOOKING")
+        conversation_state.update_state(clean_phone, "NEW_BOOKING", booking_details=details)
         return
         
     # Query trucks matching origin and capacity
@@ -166,7 +166,8 @@ def handle_new_booking(from_whatsapp: str, clean_phone: str, body: str, history:
     conversation_state.update_state(
         phone=clean_phone,
         last_intent="CONFIRMATION",
-        matched_trucks=matched_trucks
+        matched_trucks=matched_trucks,
+        booking_details=details
     )
     
     # Send WhatsApp choices
@@ -176,6 +177,7 @@ def handle_new_booking(from_whatsapp: str, clean_phone: str, body: str, history:
 def handle_confirmation(from_whatsapp: str, clean_phone: str, body: str, state: dict, operator: dict):
     """Handles truck option confirmation selection (1, 2, or 3)."""
     matched_trucks = state["context_json"].get("matched_trucks", [])
+    booking_details = state["context_json"].get("booking_details", {})
     
     if not matched_trucks:
         # No active truck choices, treat as new booking attempt
@@ -192,33 +194,31 @@ def handle_confirmation(from_whatsapp: str, clean_phone: str, body: str, state: 
     choice_idx = int(choice_digits[0]) - 1
     selected_truck = matched_trucks[choice_idx]
     
-    # Extract details from previous context to populate shipment fields
-    # We can reconstruct it or read from matched_truck details (which contain origin/dest/weight/cargo)
-    origin = selected_truck.get("home_city")  # home_city acted as matching origin
-    # Search history for destination, cargo, weight, scheduled_date
-    history_str = " ".join(state["context_json"]["history"]).lower()
+    # Use booking_details if available, fallback to defaults/history reconstruction if missing
+    origin = booking_details.get("origin") or selected_truck.get("home_city")
+    destination = booking_details.get("destination") or "Destination"
+    cargo = booking_details.get("cargo_type") or "General Goods"
     
-    # Simple extracts from history or defaults
-    cargo = "General Goods"
-    for item in ["pyaaz", "onion", "textiles", "kapda", "chemicals", "steel"]:
-        if item in history_str:
-            cargo = item.capitalize()
-            break
-            
-    weight = selected_truck.get("capacity_tons", 8.0)
-    scheduled_date = "2026-06-09"  # Default tomorrow
-    
-    # Try parsing scheduled date from history if available
-    date_match = re.search(r'\b\d{4}-\d{2}-\d{2}\b', history_str)
-    if date_match:
-        scheduled_date = date_match.group(0)
+    weight = booking_details.get("weight_tons")
+    if weight is None:
+        weight = selected_truck.get("capacity_tons") or 8.0
+    else:
+        weight = float(weight)
+        
+    scheduled_date = booking_details.get("scheduled_date")
+    if not scheduled_date:
+        scheduled_date = "2026-06-09"  # Default tomorrow
+        history_str = " ".join(state["context_json"].get("history", [])).lower()
+        date_match = re.search(r'\b\d{4}-\d{2}-\d{2}\b', history_str)
+        if date_match:
+            scheduled_date = date_match.group(0)
         
     # Create the shipment in the DB
     shipment = supabase_service.create_shipment(
         operator_id=operator["id"],
         truck_id=selected_truck["id"],
         origin=origin,
-        destination=selected_truck.get("current_city") or "Destination", # Default destination or calculate
+        destination=destination,
         cargo_type=cargo,
         weight_tons=weight,
         scheduled_date=scheduled_date,
@@ -254,6 +254,7 @@ def handle_confirmation(from_whatsapp: str, clean_phone: str, body: str, state: 
         phone=clean_phone,
         last_intent="OTHER",
         matched_trucks=[],
+        booking_details={},
         active_shipment_id=shipment["id"]
     )
     
@@ -263,7 +264,7 @@ def handle_confirmation(from_whatsapp: str, clean_phone: str, body: str, state: 
         f"Trip ID: {shipment['id'][:8].upper()}\n"
         f"Truck Number: {selected_truck['truck_number']}\n"
         f"Driver Name: {selected_truck['driver_name']} ({selected_truck['driver_phone']})\n"
-        f"Route: {origin} to {selected_truck.get('current_city')}\n"
+        f"Route: {origin} to {destination}\n"
         f"Estimated Rate: ₹{selected_truck.get('calculated_rate', 5000):,}\n\n"
         "Draft E-Way Bill PDF nichhe bheja gaya hai."
     )
@@ -281,7 +282,7 @@ def handle_confirmation(from_whatsapp: str, clean_phone: str, body: str, state: 
         "🚨 TRIP ASSIGNED!\n\n"
         f"Aapko ek trip assign ki gayi hai:\n"
         f"Origin: {origin}\n"
-        f"Destination: {selected_truck.get('current_city')}\n"
+        f"Destination: {destination}\n"
         f"Cargo: {cargo} ({weight} Ton)\n"
         f"Operator: {operator.get('business_name')} ({operator.get('phone')})\n\n"
         "Maal load hone par reply karein: 'LOADED'"

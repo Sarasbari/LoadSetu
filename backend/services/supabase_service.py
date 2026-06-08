@@ -40,6 +40,12 @@ MOCK_CONVERSATIONS = {}
 def is_mock_active() -> bool:
     return IS_MOCK
 
+def handle_error(func, *args, **kwargs):
+    global IS_MOCK
+    logger.warning(f"Supabase operation failed. Auto-switching to MOCK DB mode.")
+    IS_MOCK = True
+    return func(*args, **kwargs)
+
 # --- Operators Operations ---
 
 def get_operator_by_phone(phone: str):
@@ -50,7 +56,7 @@ def get_operator_by_phone(phone: str):
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error getting operator: {e}")
-        return None
+        return handle_error(get_operator_by_phone, phone)
 
 def create_operator(phone: str, name: str = None, business_name: str = None, city: str = None):
     if IS_MOCK:
@@ -69,7 +75,7 @@ def create_operator(phone: str, name: str = None, business_name: str = None, cit
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error creating operator: {e}")
-        return None
+        return handle_error(create_operator, phone, name, business_name, city)
 
 # --- Trucks Operations ---
 
@@ -81,7 +87,7 @@ def get_all_trucks():
         return res.data
     except Exception as e:
         logger.error(f"Error getting trucks: {e}")
-        return []
+        return handle_error(get_all_trucks)
 
 def get_available_trucks(origin: str, capacity: float):
     if IS_MOCK:
@@ -119,7 +125,7 @@ def get_available_trucks(origin: str, capacity: float):
         return sorted_trucks[:3]
     except Exception as e:
         logger.error(f"Error matching trucks: {e}")
-        return []
+        return handle_error(get_available_trucks, origin, capacity)
 
 def get_truck_by_id(truck_id: str):
     if IS_MOCK:
@@ -132,7 +138,7 @@ def get_truck_by_id(truck_id: str):
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error getting truck by id: {e}")
-        return None
+        return handle_error(get_truck_by_id, truck_id)
 
 def update_truck_availability(truck_id: str, is_available: bool, current_city: str = None):
     if IS_MOCK:
@@ -151,7 +157,7 @@ def update_truck_availability(truck_id: str, is_available: bool, current_city: s
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error updating truck availability: {e}")
-        return None
+        return handle_error(update_truck_availability, truck_id, is_available, current_city)
 
 def get_truck_by_driver_phone(driver_phone: str):
     if IS_MOCK:
@@ -164,7 +170,7 @@ def get_truck_by_driver_phone(driver_phone: str):
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error getting truck by driver phone: {e}")
-        return None
+        return handle_error(get_truck_by_driver_phone, driver_phone)
 
 def create_truck(driver_name: str, driver_phone: str, truck_number: str, truck_type: str, capacity_tons: float, home_city: str, notes: str = None):
     if IS_MOCK:
@@ -197,7 +203,7 @@ def create_truck(driver_name: str, driver_phone: str, truck_number: str, truck_t
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error creating truck: {e}")
-        return None
+        return handle_error(create_truck, driver_name, driver_phone, truck_number, truck_type, capacity_tons, home_city, notes)
 
 # --- Shipments Operations ---
 
@@ -243,7 +249,7 @@ def create_shipment(operator_id: str, truck_id: str, origin: str, destination: s
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error creating shipment: {e}")
-        return None
+        return handle_error(create_shipment, operator_id, truck_id, origin, destination, cargo_type, weight_tons, scheduled_date, status)
 
 def get_shipment_by_id(shipment_id: str):
     if IS_MOCK:
@@ -253,7 +259,7 @@ def get_shipment_by_id(shipment_id: str):
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error getting shipment by id: {e}")
-        return None
+        return handle_error(get_shipment_by_id, shipment_id)
 
 def get_shipments_with_details():
     if IS_MOCK:
@@ -275,7 +281,7 @@ def get_shipments_with_details():
         return res.data
     except Exception as e:
         logger.error(f"Error getting detailed shipments: {e}")
-        return []
+        return handle_error(get_shipments_with_details)
 
 def update_shipment_status(shipment_id: str, status: str, ewb_draft_json: dict = None, ewb_pdf_url: str = None):
     import datetime
@@ -313,7 +319,7 @@ def update_shipment_status(shipment_id: str, status: str, ewb_draft_json: dict =
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error updating shipment: {e}")
-        return None
+        return handle_error(update_shipment_status, shipment_id, status, ewb_draft_json, ewb_pdf_url)
 
 def get_active_shipment_for_operator(operator_id: str):
     if IS_MOCK:
@@ -332,7 +338,7 @@ def get_active_shipment_for_operator(operator_id: str):
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error getting active shipment for operator: {e}")
-        return None
+        return handle_error(get_active_shipment_for_operator, operator_id)
 
 def get_active_shipment_for_driver(driver_phone: str):
     truck = get_truck_by_driver_phone(driver_phone)
@@ -354,7 +360,7 @@ def get_active_shipment_for_driver(driver_phone: str):
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error getting active shipment for driver: {e}")
-        return None
+        return handle_error(get_active_shipment_for_driver, driver_phone)
 
 # --- Messages Operations ---
 
@@ -381,7 +387,7 @@ def log_message(phone_number: str, direction: str, body: str, shipment_id: str =
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error logging message: {e}")
-        return None
+        return handle_error(log_message, phone_number, direction, body, shipment_id)
 
 def get_all_messages():
     if IS_MOCK:
@@ -391,7 +397,7 @@ def get_all_messages():
         return res.data
     except Exception as e:
         logger.error(f"Error getting all messages: {e}")
-        return []
+        return handle_error(get_all_messages)
 
 # --- Conversation State Operations ---
 
@@ -403,7 +409,7 @@ def get_conversation_state(phone_number: str):
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error getting conversation state: {e}")
-        return None
+        return handle_error(get_conversation_state, phone_number)
 
 def update_conversation_state(phone_number: str, last_intent: str, context_json: list, active_shipment_id: str = None):
     import datetime
@@ -431,7 +437,7 @@ def update_conversation_state(phone_number: str, last_intent: str, context_json:
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error updating conversation state: {e}")
-        return None
+        return handle_error(update_conversation_state, phone_number, last_intent, context_json, active_shipment_id)
 
 def upload_ewb_pdf_bytes(shipment_id: str, pdf_bytes: bytes) -> str:
     """Uploads PDF bytes to Supabase Storage and returns the public URL"""
@@ -450,4 +456,4 @@ def upload_ewb_pdf_bytes(shipment_id: str, pdf_bytes: bytes) -> str:
         return url_res
     except Exception as e:
         logger.error(f"Error uploading PDF: {e}")
-        return ""
+        return handle_error(upload_ewb_pdf_bytes, shipment_id, pdf_bytes)

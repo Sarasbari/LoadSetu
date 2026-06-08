@@ -194,7 +194,7 @@ def generate_ewb_pdf(ewb_dict: dict, shipment_id: str) -> str:
         # Draw transparent watermark across page
         canvas.translate(300, 400)
         canvas.rotate(45)
-        canvas.drawCentredString(0, 0, "DRAFT - NOT OFFICIAL EWB")
+        canvas.drawCentredString(0, 0, "DRAFT — NOT A PORTAL-ISSUED EWB")
         canvas.restoreState()
         
     doc.build(story, onFirstPage=add_watermark)

@@ -12,7 +12,8 @@ def get_state(phone: str) -> dict:
             "last_intent": "OTHER",
             "context_json": {
                 "history": [],
-                "matched_trucks": []
+                "matched_trucks": [],
+                "booking_details": {}
             },
             "active_shipment_id": None
         }
@@ -24,18 +25,21 @@ def get_state(phone: str) -> dict:
         history = context if isinstance(context, list) else []
         state["context_json"] = {
             "history": history,
-            "matched_trucks": []
+            "matched_trucks": [],
+            "booking_details": {}
         }
     else:
         if "history" not in context:
             context["history"] = []
         if "matched_trucks" not in context:
             context["matched_trucks"] = []
+        if "booking_details" not in context:
+            context["booking_details"] = {}
             
     return state
 
-def update_state(phone: str, last_intent: str, new_message: str = None, matched_trucks: list = None, active_shipment_id: str = None) -> dict:
-    """Updates the conversation state with new messages and/or matched truck data."""
+def update_state(phone: str, last_intent: str, new_message: str = None, matched_trucks: list = None, active_shipment_id: str = None, booking_details: dict = None) -> dict:
+    """Updates the conversation state with new messages, matched truck data, and booking details."""
     state = get_state(phone)
     
     shipment_id = active_shipment_id or state.get("active_shipment_id")
@@ -51,6 +55,10 @@ def update_state(phone: str, last_intent: str, new_message: str = None, matched_
     # Update matched trucks if provided
     if matched_trucks is not None:
         context["matched_trucks"] = matched_trucks
+        
+    # Update booking details if provided
+    if booking_details is not None:
+        context["booking_details"] = booking_details
         
     updated_state = supabase_service.update_conversation_state(
         phone_number=phone,
@@ -69,7 +77,8 @@ def clear_state(phone: str):
         last_intent="OTHER",
         context_json={
             "history": [],
-            "matched_trucks": []
+            "matched_trucks": [],
+            "booking_details": {}
         },
         active_shipment_id=state.get("active_shipment_id")
     )

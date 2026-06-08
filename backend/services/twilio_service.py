@@ -46,13 +46,20 @@ def send_message(to_number: str, body: str, shipment_id: str = None, media_url: 
     )
 
     if IS_MOCK_TWILIO:
-        print("\n=== [MOCK WHATSAPP OUTBOUND] ===")
-        print(f"TO: {to_whatsapp}")
-        print(f"FROM: {TWILIO_WHATSAPP_NUMBER}")
-        print(f"BODY: {body}")
-        if media_url:
-            print(f"MEDIA: {media_url}")
-        print("=================================\n")
+        try:
+            print("\n=== [MOCK WHATSAPP OUTBOUND] ===")
+            print(f"TO: {to_whatsapp}")
+            print(f"FROM: {TWILIO_WHATSAPP_NUMBER}")
+            # Replace Rupee symbol and emojis safely for Windows console printing
+            safe_body = body.replace("₹", "Rs. ").replace("✅", "[OK]").replace("❌", "[ERROR]").replace("🚨", "[ALERT]").replace("🙏", "[NAMASTE]").replace("ℹ️", "[INFO]")
+            print(f"BODY: {safe_body}")
+            if media_url:
+                print(f"MEDIA: {media_url}")
+            print("=================================\n")
+        except Exception:
+            # Ultimate fallback
+            safe_body = body.encode('ascii', errors='replace').decode('ascii')
+            print(f"BODY (ascii-safe): {safe_body}")
         return True
         
     try:
@@ -70,5 +77,10 @@ def send_message(to_number: str, body: str, shipment_id: str = None, media_url: 
     except Exception as e:
         logger.error(f"Failed to send Twilio message: {e}")
         # Return True in mock fallback mode so application testing does not break
-        print(f"\n[FALLBACK OUTBOUND] To: {to_whatsapp} | Body: {body}\n")
+        try:
+            safe_body = body.replace("₹", "Rs. ").replace("✅", "[OK]").replace("❌", "[ERROR]").replace("🚨", "[ALERT]").replace("🙏", "[NAMASTE]").replace("ℹ️", "[INFO]")
+            print(f"\n[FALLBACK OUTBOUND] To: {to_whatsapp} | Body: {safe_body}\n")
+        except Exception:
+            safe_body = body.encode('ascii', errors='replace').decode('ascii')
+            print(f"\n[FALLBACK OUTBOUND] To: {to_whatsapp} | Body: {safe_body}\n")
         return True
