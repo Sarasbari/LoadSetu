@@ -1,0 +1,39 @@
+# Project documentation (requested by user)
+LoadSetu_ProjectDocs.md
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python backend ignores
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache/
+**/backend/.env
+**/backend/.venv/
+**/backend/venv/
+
+# Local PDF files
+**/*.pdf
+
+# Node/React frontend ignores
+**/frontend/node_modules/
+**/frontend/dist/
+**/frontend/dist-ssr/
+**/frontend/package-lock.json
+**/frontend/yarn.lock
+**/frontend/pnpm-lock.yaml
+**/frontend/.env
+**/frontend/.env.local
+**/frontend/.env.*.local
+
+# IDE/Editor config
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp

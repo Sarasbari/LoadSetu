@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+supabase
+twilio
+groq
+pydantic
+python-dotenv
+python-multipart
+reportlab
+requests
