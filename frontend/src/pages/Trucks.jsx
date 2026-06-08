@@ -106,78 +106,104 @@ export default function Trucks() {
   });
 
   if (loading) {
-    return <div style={{ color: 'var(--color-text-secondary)', fontFamily: 'var(--font-display)' }}>Loading Truck Registry...</div>;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+        <header className="app-header">
+          <h2 className="page-title">Truck Registry Management</h2>
+        </header>
+        <div className="content-body">
+          <div style={{ color: 'var(--color-text-secondary)', fontFamily: 'var(--font-display)', fontWeight: 600 }}>Loading fleet registry...</div>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div>
-      {/* Search & Actions Bar */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '20px', marginBottom: '24px', flexWrap: 'wrap' }}>
-        <div style={{ display: 'flex', gap: '16px', flexGrow: 1, maxWidth: '600px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      {/* Consistent Header with redone action layout */}
+      <header className="app-header">
+        <h2 className="page-title">Truck Registry Management</h2>
+        <div className="header-actions">
+          {/* Search bar */}
           <input
             type="text"
-            className="input"
+            className="input-search"
             placeholder="Search by vehicle number, driver, or city..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12px', whiteSpace: 'nowrap' }}>
-            <input
-              type="checkbox"
-              checked={showAvailableOnly}
-              onChange={(e) => setShowAvailableOnly(e.target.checked)}
-              style={{ accentColor: 'var(--color-saffron)' }}
-            />
+          
+          {/* Toggle Switch */}
+          <div className="toggle-switch-container">
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={showAvailableOnly}
+                onChange={(e) => setShowAvailableOnly(e.target.checked)}
+              />
+              <span className="slider"></span>
+            </label>
             Show Available Only
-          </label>
-        </div>
-        
-        <button className="btn-primary" onClick={() => setIsModalOpen(true)}>
-          ➕ Add Truck
-        </button>
-      </div>
-
-      {/* Grid of Truck Cards */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '20px' }}>
-        {filteredTrucks.length === 0 ? (
-          <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px', color: 'var(--color-text-secondary)' }}>
-            No trucks match your filters.
           </div>
-        ) : (
-          filteredTrucks.map(t => (
-            <div className="card" key={t.id} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--color-navy-light)', paddingBottom: '8px' }}>
-                <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: '15px' }}>{t.truck_number}</span>
-                <span className={`badge ${t.is_available ? 'badge-confirmed' : 'badge-pending'}`}>
-                  {t.is_available ? 'Available' : 'On Trip'}
-                </span>
-              </div>
-              
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '13px' }}>
-                <div><span style={{ color: 'var(--color-text-secondary)' }}>Driver:</span> {t.driver_name}</div>
-                <div><span style={{ color: 'var(--color-text-secondary)' }}>Phone:</span> <span style={{ fontFamily: 'var(--font-mono)' }}>{t.driver_phone}</span></div>
-                <div><span style={{ color: 'var(--color-text-secondary)' }}>Type / Cap:</span> {t.truck_type.toUpperCase()} / {t.capacity_tons} Tons</div>
-                <div><span style={{ color: 'var(--color-text-secondary)' }}>Home / Current:</span> {t.home_city} / {t.current_city}</div>
-                {t.notes && <div style={{ fontSize: '11px', color: 'var(--color-text-muted)', marginTop: '4px', fontStyle: 'italic' }}>Note: {t.notes}</div>}
-              </div>
-              
-              <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: '11px', color: 'var(--color-text-secondary)' }}>Toggle Availability:</span>
-                <input
-                  type="checkbox"
-                  checked={t.is_available}
-                  onChange={() => handleToggleAvailability(t.id, t.is_available, t.current_city)}
-                  style={{ 
-                    cursor: 'pointer',
-                    width: '16px',
-                    height: '16px',
-                    accentColor: 'var(--color-saffron)'
-                  }}
-                />
-              </div>
+          
+          {/* Saffron Button */}
+          <button className="btn-saffron" onClick={() => setIsModalOpen(true)}>
+            + Add Truck
+          </button>
+        </div>
+      </header>
+
+      {/* Main Content Body */}
+      <div className="content-body" style={{ overflowY: 'auto' }}>
+        <div className="trucks-grid">
+          {filteredTrucks.length === 0 ? (
+            <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px', color: 'var(--color-text-secondary)' }}>
+              No trucks match your current filters.
             </div>
-          ))
-        )}
+          ) : (
+            filteredTrucks.map(t => (
+              <div className="truck-card" key={t.id}>
+                <div className="truck-card-header">
+                  <span className="truck-number-title">{t.truck_number}</span>
+                  <span className={`badge-pill ${t.is_available ? 'badge-pill-success' : 'badge-pill-warning'}`}>
+                    {t.is_available ? 'Available' : 'On Trip'}
+                  </span>
+                </div>
+                
+                <div className="truck-details-list">
+                  <div className="truck-details-row">
+                    <span className="truck-details-label">Driver</span>
+                    <span className="truck-details-val">{t.driver_name}</span>
+                  </div>
+                  <div className="truck-details-row">
+                    <span className="truck-details-label">Phone</span>
+                    <span className="truck-details-val mono">{t.driver_phone}</span>
+                  </div>
+                  <div className="truck-details-row">
+                    <span className="truck-details-label">Type / Cap</span>
+                    <span className="truck-details-val">{t.truck_type.toUpperCase()} / {t.capacity_tons} Tons</span>
+                  </div>
+                  <div className="truck-details-row">
+                    <span className="truck-details-label">Home / Current</span>
+                    <span className="truck-details-val">{t.home_city} / {t.current_city}</span>
+                  </div>
+                </div>
+                
+                <div className="truck-card-footer">
+                  <span>Toggle Availability</span>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={t.is_available}
+                      onChange={() => handleToggleAvailability(t.id, t.is_available, t.current_city)}
+                    />
+                    <span className="slider"></span>
+                  </label>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
 
       {/* Add Truck Modal */}
@@ -188,7 +214,7 @@ export default function Trucks() {
               <h3 className="modal-title">Register New Truck</h3>
               <button 
                 onClick={() => setIsModalOpen(false)}
-                style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '18px' }}
+                style={{ background: 'none', border: 'none', color: 'var(--color-text-secondary)', cursor: 'pointer', fontSize: '18px', fontWeight: 600 }}
               >
                 ✕
               </button>
@@ -196,7 +222,7 @@ export default function Trucks() {
             
             <form onSubmit={handleSubmit}>
               {formError && (
-                <div style={{ color: 'var(--color-danger)', fontSize: '12px', marginBottom: '16px', background: 'rgba(231,76,60,0.1)', padding: '8px', borderRadius: '4px' }}>
+                <div style={{ color: 'var(--color-danger)', fontSize: '12px', marginBottom: '16px', background: 'var(--badge-danger-bg)', padding: '8px', borderRadius: '4px' }}>
                   ⚠️ {formError}
                 </div>
               )}
@@ -245,7 +271,6 @@ export default function Trucks() {
                 <select
                   name="truck_type"
                   className="input"
-                  style={{ background: 'var(--color-navy)', color: 'var(--color-text-primary)' }}
                   value={formData.truck_type}
                   onChange={handleInputChange}
                   required
@@ -300,7 +325,7 @@ export default function Trucks() {
                 <button type="button" className="btn-secondary" onClick={() => setIsModalOpen(false)}>
                   Cancel
                 </button>
-                <button type="submit" className="btn-primary">
+                <button type="submit" className="btn-saffron">
                   Save Registry
                 </button>
               </div>

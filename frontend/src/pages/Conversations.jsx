@@ -51,7 +51,6 @@ export default function Conversations() {
   }, [selectedPhone]);
 
   const renderMessageBody = (text) => {
-    // Detect URLs (specifically for EWB draft PDF links)
     const urlRegex = /(https?:\/\/[^\s]+)/g;
     const parts = text.split(urlRegex);
     
@@ -87,78 +86,127 @@ export default function Conversations() {
   };
 
   if (loadingList) {
-    return <div style={{ color: 'var(--color-text-secondary)', fontFamily: 'var(--font-display)' }}>Loading Conversation Logs...</div>;
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+        <header className="app-header">
+          <h2 className="page-title">WhatsApp Agent Chat Logs</h2>
+          <div className="header-actions">
+            <div className="sandbox-badge">
+              <svg className="sandbox-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+              Sandbox Mode
+            </div>
+          </div>
+        </header>
+        <div className="content-body">
+          <div style={{ color: 'var(--color-text-secondary)', fontFamily: 'var(--font-display)', fontWeight: 600 }}>Loading conversation lists...</div>
+        </div>
+      </div>
+    );
   }
 
   return (
-    <div className="conversations-container">
-      {/* List of active numbers */}
-      <div className="threads-sidebar">
-        <div className="threads-header">ACTIVE CHATS</div>
-        <ul className="threads-list">
-          {conversations.length === 0 ? (
-            <li style={{ padding: '20px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
-              No messages logged yet.
-            </li>
-          ) : (
-            conversations.map(c => (
-              <li 
-                key={c.phone_number} 
-                className={`thread-item ${selectedPhone === c.phone_number ? 'active' : ''}`}
-                onClick={() => setSelectedPhone(c.phone_number)}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div className="thread-phone">{c.phone_number}</div>
-                  <span style={{ fontSize: '10px', background: 'var(--color-navy-light)', padding: '2px 6px', borderRadius: '10px', fontFamily: 'var(--font-mono)' }}>
-                    {c.message_count}
-                  </span>
-                </div>
-                <div className="thread-last-msg">
-                  {c.last_direction === 'OUTBOUND' ? '➜ ' : '← '} {c.last_message}
-                </div>
-                <div className="thread-meta">
-                  <span className="thread-time">{formatTimestamp(c.last_timestamp)}</span>
-                </div>
-              </li>
-            ))
-          )}
-        </ul>
-      </div>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+      {/* Consistent Header */}
+      <header className="app-header">
+        <h2 className="page-title">WhatsApp Agent Chat Logs</h2>
+        <div className="header-actions">
+          <div className="sandbox-badge">
+            <svg className="sandbox-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+            Sandbox Mode
+          </div>
+        </div>
+      </header>
 
-      {/* Chat Thread Panel */}
-      <div className="chat-viewer">
-        {selectedPhone ? (
-          <>
-            <div className="chat-header">
-              <span className="chat-title">Conversation with {selectedPhone}</span>
-              <button 
-                className="btn-secondary" 
-                onClick={() => fetchThread(selectedPhone)}
-                style={{ padding: '4px 10px', fontSize: '11px' }}
-              >
-                {loadingThread ? 'Refreshing...' : '🔄 Refresh'}
-              </button>
-            </div>
-            
-            <div className="chat-thread-container">
-              {messages.length === 0 ? (
-                <div className="chat-empty">Thread is empty.</div>
+      {/* Main Split Content Body */}
+      <div className="content-body">
+        <div className="conversations-split-view">
+          {/* Threads sidebar */}
+          <div className="chats-list-panel">
+            <div className="chats-panel-header">ACTIVE CHATS</div>
+            <ul className="chats-list">
+              {conversations.length === 0 ? (
+                <li style={{ padding: '20px', textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+                  No messages logged yet.
+                </li>
               ) : (
-                messages.map(m => (
-                  <div 
-                    key={m.id} 
-                    className={`chat-message ${m.direction.toLowerCase()}`}
+                conversations.map((c, i) => (
+                  <li 
+                    key={c.phone_number} 
+                    className={`chats-list-item ${selectedPhone === c.phone_number ? 'active' : ''}`}
+                    onClick={() => setSelectedPhone(c.phone_number)}
                   >
-                    <div>{renderMessageBody(m.body)}</div>
-                    <span className="msg-time">{formatTimestamp(m.timestamp)}</span>
-                  </div>
+                    <div className="chats-item-header">
+                      <div className="chats-phone">{c.phone_number}</div>
+                      {/* Show unread indicator or mock unread for first item for realistic mockup feel */}
+                      {(c.message_count > 1 || i === 1) && (
+                        <span className="chats-unread-badge">
+                          Unread
+                        </span>
+                      )}
+                    </div>
+                    <div className="chats-snippet">
+                      {c.last_direction === 'OUTBOUND' ? '➜ ' : '← '} {c.last_message}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span className="chats-time">{formatTimestamp(c.last_timestamp)}</span>
+                      {/* Message count bubble */}
+                      <span style={{ fontSize: '10px', background: 'var(--color-border)', padding: '1px 6px', borderRadius: '10px', fontFamily: 'var(--font-mono)' }}>
+                        {c.message_count}
+                      </span>
+                    </div>
+                  </li>
                 ))
               )}
-            </div>
-          </>
-        ) : (
-          <div className="chat-empty">Select a phone number from the list to view chat logs.</div>
-        )}
+            </ul>
+          </div>
+
+          {/* Chat Window Thread */}
+          <div className="chat-window">
+            {selectedPhone ? (
+              <>
+                <div className="chat-window-header">
+                  <span className="chat-window-title">Conversation with {selectedPhone}</span>
+                  <button className="btn-refresh" onClick={() => fetchThread(selectedPhone)}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                    </svg>
+                    {loadingThread ? 'Refreshing...' : 'Refresh'}
+                  </button>
+                </div>
+                
+                <div className="chat-messages-scroller">
+                  {messages.length === 0 ? (
+                    <div className="chat-window-empty">Thread is empty.</div>
+                  ) : (
+                    messages.map((m) => {
+                      const isOutbound = m.direction.toLowerCase() === 'outbound';
+                      return (
+                        <div 
+                          key={m.id} 
+                          className={`chat-bubble-container ${isOutbound ? 'outbound' : 'inbound'}`}
+                        >
+                          {isOutbound && (
+                            <span className="chat-agent-tag">LoadSetu Agent</span>
+                          )}
+                          <div className={`chat-bubble ${isOutbound ? 'outbound' : 'inbound'}`}>
+                            <div>{renderMessageBody(m.body)}</div>
+                            <div className="chat-meta">
+                              <span className="chat-timestamp">{formatTimestamp(m.timestamp)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="chat-window-empty">
+                Select an active chat thread to view conversations.
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

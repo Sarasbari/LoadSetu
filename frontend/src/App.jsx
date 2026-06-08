@@ -19,19 +19,6 @@ export default function App() {
     }
   };
 
-  const getPageTitle = () => {
-    switch (activeTab) {
-      case 'dashboard':
-        return 'Live Operations Control';
-      case 'trucks':
-        return 'Truck Registry Management';
-      case 'conversations':
-        return 'WhatsApp Agent Chat Logs';
-      default:
-        return 'LoadSetu Control Room';
-    }
-  };
-
   return (
     <div className="app-container">
       {/* Sidebar Navigation */}
@@ -71,16 +58,9 @@ export default function App() {
         </div>
       </aside>
 
-      {/* Main Panel Content */}
+      {/* Main Panel Content Area */}
       <main className="main-content">
-        <header className="app-header">
-          <h2 className="page-title">{getPageTitle()}</h2>
-          <span className="admin-badge">🛠️ Sandbox Mode</span>
-        </header>
-        
-        <section className="content-body">
-          {renderContent()}
-        </section>
+        {renderContent()}
       </main>
     </div>
   );
