@@ -346,7 +346,7 @@ def handle_status_update(from_whatsapp: str, clean_phone: str, body: str, operat
         status_text = {
             "LOADED": "LOADED (Maal load ho gaya hai)",
             "IN_TRANSIT": "IN_TRANSIT (Truck nikal gaya hai)",
-            "DELIVERED": "DELIVERED (Trip safalta-पूर्वक deliver ho gayi)",
+            "DELIVERED": "DELIVERED (Trip safaltapoorvak deliver ho gayi)",
             "DELAYED": "DELAYED (Trip mein delay reported)"
         }.get(new_status, new_status)
         

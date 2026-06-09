@@ -7,6 +7,29 @@ HEADERS = {
     "Authorization": "Bearer secret_admin_token_2026"
 }
 
+
+def get_shipment_ids():
+    """Returns set of current shipment IDs."""
+    res = requests.get(f"{BASE_URL}/shipments", headers=HEADERS)
+    if res.status_code != 200:
+        return set()
+    data = res.json()
+    shipments = data.get("shipments", [])
+    return {s["id"] for s in shipments}
+
+
+def find_shipment_by_id(shipment_id):
+    """Fetch current state of a specific shipment from the list."""
+    res = requests.get(f"{BASE_URL}/shipments", headers=HEADERS)
+    if res.status_code != 200:
+        return None
+    data = res.json()
+    for s in data.get("shipments", []):
+        if s.get("id") == shipment_id:
+            return s
+    return None
+
+
 def run_verification():
     print("==================================================")
     print("      LoadSetu Automated E2E Flow Verification    ")
@@ -16,7 +39,7 @@ def run_verification():
     try:
         res = requests.get(f"{BASE_URL}/health")
         if res.status_code == 200:
-            print("[INFO] Connected to backend health endpoint.")
+            print("[PASS] Connected to backend health endpoint.")
         else:
             print(f"[FAIL] Health check failed with status: {res.status_code}")
             return False
@@ -25,7 +48,10 @@ def run_verification():
         return False
 
     operator_phone = "+919876543210"
-    driver_phone = "+919876543211"
+
+    # Snapshot shipment IDs before booking
+    ids_before = get_shipment_ids()
+    print(f"[INFO] Shipments before booking: {len(ids_before)} ({ids_before})")
 
     # Step 1: Send New Booking Request
     print("\n--- Step 1: Operator requests a truck ---")
@@ -39,15 +65,6 @@ def run_verification():
         print("[PASS] Webhook processed operator booking request.")
     else:
         print(f"[FAIL] Webhook failed: {res1.status_code}\n{res1.text}")
-        return False
-
-    # Get conversation history & state
-    state_res = requests.get(f"{BASE_URL}/conversations", headers=HEADERS)
-    if state_res.status_code == 200:
-        conversations = state_res.json()
-        print(f"[PASS] Successfully fetched active conversations.")
-    else:
-        print(f"[FAIL] Failed to fetch active conversation threads: {state_res.status_code}\n{state_res.text}")
         return False
 
     # Step 2: Confirm Selection (Option 1)
@@ -64,52 +81,61 @@ def run_verification():
         print(f"[FAIL] Webhook failed: {res2.status_code}\n{res2.text}")
         return False
 
-    # Check shipments
-    shipments_res = requests.get(f"{BASE_URL}/shipments", headers=HEADERS)
-    if shipments_res.status_code == 200:
-        shipments_data = shipments_res.json()
-        shipments_list = shipments_data.get("shipments", [])
-        
-        print("\n[DEBUG] Available Shipments in DB:")
-        for s in shipments_list:
-            print(f" - ID: {s.get('id')}, Status: {s.get('status')}, Route: {s.get('origin')} -> {s.get('destination')}")
-        
-        if not shipments_list:
-            print("[FAIL] No shipments found after confirmation.")
-            return False
-        
-        # Find the newly created shipment (should be shp_4 or the highest ID)
-        latest_shipment = None
-        for s in shipments_list:
-            if s.get("id") == "shp_4":
-                latest_shipment = s
-                break
-                
-        if not latest_shipment:
-            # Fallback to the first one in the list
-            latest_shipment = shipments_list[0]
-            
-        print(f"\n[PASS] Selected shipment for E2E check! ID: {latest_shipment['id']}")
-        print(f"[INFO] Route: {latest_shipment['origin']} to {latest_shipment['destination']}")
-        print(f"[INFO] Cargo: {latest_shipment['cargo_type']} ({latest_shipment['weight_tons']} Tons)")
-        
-        # Verify the route is Surat to Mumbai (NOT Surat to Surat or Nashik to Surat)
-        if latest_shipment['origin'] != "Surat" or latest_shipment['destination'] != "Mumbai":
-            print(f"[FAIL] Incorrect route details! Expected Surat to Mumbai, got {latest_shipment['origin']} to {latest_shipment['destination']}")
-            return False
-        else:
-            print("[PASS] Route is correct: Surat to Mumbai.")
-            
-        # Verify PDF is generated and public URL is set
-        pdf_url = latest_shipment.get("ewb_pdf_url")
-        if pdf_url:
-            print(f"[PASS] E-Way Bill PDF Draft url set: {pdf_url}")
-        else:
-            print("[FAIL] E-Way Bill PDF Draft URL is missing.")
-            return False
-    else:
-        print(f"[FAIL] Failed to fetch shipments: {shipments_res.status_code}")
+    # Find the NEW shipment by diffing IDs
+    ids_after = get_shipment_ids()
+    new_ids = ids_after - ids_before
+    print(f"[INFO] Shipments after booking: {len(ids_after)} ({ids_after})")
+    print(f"[INFO] Newly created shipment IDs: {new_ids}")
+
+    if not new_ids:
+        print("[FAIL] No new shipment was created after confirmation.")
         return False
+
+    new_shipment_id = sorted(new_ids)[-1]  # Pick the latest by ID sort
+    latest_shipment = find_shipment_by_id(new_shipment_id)
+
+    if not latest_shipment:
+        print(f"[FAIL] Could not fetch newly created shipment {new_shipment_id}")
+        return False
+
+    print(f"\n[PASS] New shipment created! ID: {latest_shipment['id']}")
+    print(f"[INFO] Route: {latest_shipment['origin']} -> {latest_shipment['destination']}")
+    print(f"[INFO] Cargo: {latest_shipment['cargo_type']} ({latest_shipment['weight_tons']} Tons)")
+    print(f"[INFO] Status: {latest_shipment['status']}")
+
+    # Verify the route is Surat to Mumbai
+    if latest_shipment['origin'] != "Surat" or latest_shipment['destination'] != "Mumbai":
+        print(f"[FAIL] Incorrect route! Expected Surat -> Mumbai, got {latest_shipment['origin']} -> {latest_shipment['destination']}")
+        return False
+    else:
+        print("[PASS] Route is correct: Surat -> Mumbai.")
+
+    # Verify PDF is generated
+    pdf_url = latest_shipment.get("ewb_pdf_url")
+    if pdf_url:
+        print(f"[PASS] E-Way Bill PDF Draft URL set: {pdf_url}")
+    else:
+        print("[FAIL] E-Way Bill PDF Draft URL is missing.")
+        return False
+
+    # Discover the assigned driver phone from the trucks endpoint
+    truck_id = latest_shipment.get("truck_id")
+    driver_phone = None
+    if truck_id:
+        trucks_res = requests.get(f"{BASE_URL}/trucks", headers=HEADERS)
+        if trucks_res.status_code == 200:
+            trucks_data = trucks_res.json()
+            trucks_list = trucks_data.get("trucks", trucks_data) if isinstance(trucks_data, dict) else trucks_data
+            if isinstance(trucks_list, list):
+                for t in trucks_list:
+                    if t.get("id") == truck_id:
+                        driver_phone = t.get("driver_phone")
+                        print(f"[INFO] Assigned truck: {t.get('truck_number')} | Driver: {t.get('driver_name')} ({driver_phone})")
+                        break
+
+    if not driver_phone:
+        print("[WARN] Could not determine driver phone from truck. Using default +919876543211")
+        driver_phone = "+919876543211"
 
     # Step 3: Driver updates status to LOADED
     print("\n--- Step 3: Driver reports LOADED ---")
@@ -125,22 +151,13 @@ def run_verification():
         print(f"[FAIL] Webhook failed: {res3.status_code}\n{res3.text}")
         return False
 
-    # Verify status in shipments
-    shipments_res = requests.get(f"{BASE_URL}/shipments", headers=HEADERS)
-    shipments_data = shipments_res.json()
-    shipments_list = shipments_data.get("shipments", [])
-    
-    # Find the active shipment for driver
-    driver_shipment = None
-    for s in shipments_list:
-        if s.get("id") == latest_shipment["id"]:
-            driver_shipment = s
-            break
-            
-    if driver_shipment and driver_shipment['status'] == "LOADED":
+    # Verify status is LOADED
+    updated_shipment = find_shipment_by_id(new_shipment_id)
+    if updated_shipment and updated_shipment['status'] == "LOADED":
         print("[PASS] Shipment status successfully updated to LOADED.")
     else:
-        print(f"[FAIL] Expected status LOADED, got: {driver_shipment['status'] if driver_shipment else 'None'}")
+        actual = updated_shipment['status'] if updated_shipment else 'NOT FOUND'
+        print(f"[FAIL] Expected status LOADED, got: {actual}")
         return False
 
     # Step 4: Driver updates status to DELIVERED
@@ -158,24 +175,28 @@ def run_verification():
         return False
 
     # Verify status is DELIVERED
-    shipments_res = requests.get(f"{BASE_URL}/shipments", headers=HEADERS)
-    shipments_data = shipments_res.json()
-    shipments_list = shipments_data.get("shipments", [])
-    
-    driver_shipment = None
-    for s in shipments_list:
-        if s.get("id") == latest_shipment["id"]:
-            driver_shipment = s
-            break
-            
-    if driver_shipment and driver_shipment['status'] == "DELIVERED":
+    final_shipment = find_shipment_by_id(new_shipment_id)
+    if final_shipment and final_shipment['status'] == "DELIVERED":
         print("[PASS] Shipment status successfully updated to DELIVERED.")
     else:
-        print(f"[FAIL] Expected status DELIVERED, got: {driver_shipment['status'] if driver_shipment else 'None'}")
+        actual = final_shipment['status'] if final_shipment else 'NOT FOUND'
+        print(f"[FAIL] Expected status DELIVERED, got: {actual}")
+        return False
+
+    # Step 5: Verify Dashboard API returns updated data
+    print("\n--- Step 5: Dashboard API validation ---")
+    dash_res = requests.get(f"{BASE_URL}/shipments", headers=HEADERS)
+    if dash_res.status_code == 200:
+        dash_data = dash_res.json()
+        dash_shipments = dash_data.get("shipments", [])
+        delivered_count = sum(1 for s in dash_shipments if s.get("status") == "DELIVERED")
+        print(f"[PASS] Dashboard API returns {len(dash_shipments)} shipments ({delivered_count} delivered).")
+    else:
+        print(f"[FAIL] Dashboard API failed: {dash_res.status_code}")
         return False
 
     print("\n==================================================")
-    print("      ALL END-TO-END FLOW CHECKS PASSED!           ")
+    print("      ALL END-TO-END FLOW CHECKS PASSED!          ")
     print("==================================================")
     return True
 

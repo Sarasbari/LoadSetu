@@ -63,28 +63,37 @@ def get_mock_response(system_prompt: str, user_message: str) -> str:
     # 1. Intent Classification Mocking
     if "current message intent" in system_prompt.lower() or "intent" in system_prompt.lower():
         import re
+        
+        # Extract just the current message from the formatted prompt
+        # The prompt format is: "...Current User Message: <message>"
+        current_msg = user_message
+        current_msg_match = re.search(r'Current User Message:\s*(.+?)$', user_message, re.MULTILINE | re.DOTALL)
+        if current_msg_match:
+            current_msg = current_msg_match.group(1).strip()
+        current_msg_lower = current_msg.lower()
+        
         # Check confirmation first (high priority for options)
-        if user_message.strip() in ["1", "2", "3"] or "confirm" in user_msg_lower:
+        if current_msg.strip() in ["1", "2", "3"] or "confirm" in current_msg_lower:
             return "CONFIRMATION"
             
         # Check query
-        elif "status" in user_msg_lower or "kahan" in user_msg_lower or "where" in user_msg_lower:
+        elif "status" in current_msg_lower or "kahan" in current_msg_lower or "where" in current_msg_lower:
             return "QUERY"
             
         # Check status updates (check with specific phrases to avoid matching booking load)
-        elif "loaded" in user_msg_lower or "load ho" in user_msg_lower or "load done" in user_msg_lower or "nikal" in user_msg_lower or "pohonch" in user_msg_lower or "pahunch" in user_msg_lower or "kharab" in user_msg_lower or "delivered" in user_msg_lower:
+        elif "loaded" in current_msg_lower or "load ho" in current_msg_lower or "load done" in current_msg_lower or "nikal" in current_msg_lower or "pohonch" in current_msg_lower or "pahunch" in current_msg_lower or "kharab" in current_msg_lower or "delivered" in current_msg_lower:
             return "STATUS_UPDATE"
             
         # Check new booking
-        elif "booking" in user_msg_lower or re.search(r'\bse\b', user_msg_lower) or "ton" in user_msg_lower or "truck" in user_msg_lower or "chahiye" in user_msg_lower or "transport" in user_msg_lower:
+        elif "booking" in current_msg_lower or re.search(r'\bse\b', current_msg_lower) or "ton" in current_msg_lower or "truck" in current_msg_lower or "chahiye" in current_msg_lower or "transport" in current_msg_lower:
             # Prevent greetings from matching as booking (e.g. "namaste sir kaise ho" contains "se" in "kaise")
             is_greeting = (
-                "namaste" in user_msg_lower 
-                or "hello" in user_msg_lower 
-                or re.search(r'\bhi\b', user_msg_lower)
+                "namaste" in current_msg_lower 
+                or "hello" in current_msg_lower 
+                or re.search(r'\bhi\b', current_msg_lower)
             )
             if is_greeting:
-                if not ("se" in user_msg_lower and "ton" in user_msg_lower):
+                if not ("se" in current_msg_lower and "ton" in current_msg_lower):
                     return "OTHER"
             return "NEW_BOOKING"
             
