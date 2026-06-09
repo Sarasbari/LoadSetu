@@ -84,17 +84,15 @@ def get_mock_response(system_prompt: str, user_message: str) -> str:
         elif "loaded" in current_msg_lower or "load ho" in current_msg_lower or "load done" in current_msg_lower or "nikal" in current_msg_lower or "pohonch" in current_msg_lower or "pahunch" in current_msg_lower or "kharab" in current_msg_lower or "delivered" in current_msg_lower:
             return "STATUS_UPDATE"
             
-        # Check new booking
-        elif "booking" in current_msg_lower or re.search(r'\bse\b', current_msg_lower) or "ton" in current_msg_lower or "truck" in current_msg_lower or "chahiye" in current_msg_lower or "transport" in current_msg_lower:
-            # Prevent greetings from matching as booking (e.g. "namaste sir kaise ho" contains "se" in "kaise")
-            is_greeting = (
-                "namaste" in current_msg_lower 
-                or "hello" in current_msg_lower 
-                or re.search(r'\bhi\b', current_msg_lower)
-            )
-            if is_greeting:
-                if not ("se" in current_msg_lower and "ton" in current_msg_lower):
-                    return "OTHER"
+        # Check new booking (directly or via conversation context follow-up)
+        elif ("booking" in current_msg_lower or 
+              re.search(r'\bse\b', current_msg_lower) or 
+              "ton" in current_msg_lower or 
+              "truck" in current_msg_lower or 
+              "chahiye" in current_msg_lower or 
+              "transport" in current_msg_lower or 
+              ("conversation context" in user_msg_lower and not any(g in current_msg_lower for g in ["namaste", "hello", "hi"])) or
+              ("conversation history" in user_msg_lower and not any(g in current_msg_lower for g in ["namaste", "hello", "hi"]))):
             return "NEW_BOOKING"
             
         else:

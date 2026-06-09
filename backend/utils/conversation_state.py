@@ -1,4 +1,5 @@
 import logging
+import json
 from services import supabase_service
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,13 @@ def get_state(phone: str) -> dict:
     
     # Ensure context_json is structured correctly
     context = state.get("context_json")
+    if isinstance(context, str):
+        try:
+            context = json.loads(context)
+            state["context_json"] = context
+        except Exception as e:
+            logger.error(f"Failed to parse context_json string: {e}")
+            
     if not isinstance(context, dict):
         # Convert legacy list format to dictionary format
         history = context if isinstance(context, list) else []
@@ -67,6 +75,15 @@ def update_state(phone: str, last_intent: str, new_message: str = None, matched_
         active_shipment_id=shipment_id
     )
     
+    if updated_state is None:
+        logger.warning(f"update_conversation_state returned None for {phone}. Falling back to local state dict.")
+        return {
+            "phone_number": phone,
+            "last_intent": last_intent,
+            "context_json": context,
+            "active_shipment_id": shipment_id
+        }
+        
     return updated_state
 
 def clear_state(phone: str):
