@@ -41,13 +41,15 @@ async def receive_webhook(
     request: Request,
     From: str = Form(...),
     Body: str = Form(...),
-    MessageSid: str = Form(...)
+    MessageSid: str = Form(...),
+    NumMedia: int = Form(0),
+    MediaUrl0: str = Form(None),
+    MediaContentType0: str = Form(None)
 ):
     """POST /webhook - Main Twilio incoming message handler"""
-    logger.info(f"Received webhook: From={From}, MessageSid={MessageSid}, Body='{Body[:50]}'")
+    logger.info(f"Received webhook: From={From}, MessageSid={MessageSid}, Body='{Body[:50]}', NumMedia={NumMedia}")
     
     # 1. Twilio Signature Validation
-    # Twilio sends form data, so we reconstruct parameters for signature validation
     form_data = await request.form()
     params = dict(form_data)
     signature = request.headers.get("X-Twilio-Signature", "")
@@ -69,29 +71,42 @@ async def receive_webhook(
     operator = supabase_service.get_operator_by_phone(clean_phone)
     truck_as_driver = supabase_service.get_truck_by_driver_phone(clean_phone)
     
-    # If not registered as operator and not driver, auto-onboard as operator
-    if not operator and not truck_as_driver:
-        logger.info(f"New number detected: {clean_phone}. Auto-onboarding operator.")
-        # Auto-create operator record
-        operator = supabase_service.create_operator(
-            phone=clean_phone,
-            name="New Operator",
-            business_name="New Business",
-            city="Unknown"
-        )
-        
-        # Send onboarding message
-        onboarding_msg = (
-            "Namaste! LoadSetu par aapka swagat hai. 🙏\n"
-            "Aapka account register ho gaya hai.\n\n"
-            "Truck book karne ke liye details bhejein. Example:\n"
-            "\"Surat se Mumbai 8 ton textiles kal ke liye\""
-        )
-        twilio_service.send_message(From, onboarding_msg)
-        return Response(content="<Response></Response>", media_type="application/xml")
-        
     # 5. Load/Update Conversation State
     state = conversation_state.get_state(clean_phone)
+    
+    # Onboarding intercept
+    if not truck_as_driver:
+        if not operator:
+            logger.info(f"New number detected: {clean_phone}. Creating pending operator for onboarding.")
+            operator = supabase_service.create_operator(
+                phone=clean_phone,
+                name="New Operator",
+                business_name=None,
+                city=None,
+                onboarding_status="PENDING"
+            )
+            # Initialize onboarding state
+            state["context_json"]["onboarding_step"] = "business_name"
+            conversation_state.update_state(clean_phone, "ONBOARDING", booking_details=state["context_json"])
+            
+            welcome_msg = (
+                "Namaste! LoadSetu par aapka swagat hai. 🙏\n"
+                "Hum aapka profile setup karenge.\n\n"
+                "Kripya apni Business Name (Vyapaar ka naam) likh kar bhejein."
+            )
+            twilio_service.send_message(From, welcome_msg)
+            return Response(content="<Response></Response>", media_type="application/xml")
+            
+        onboarding_step = state["context_json"].get("onboarding_step")
+        if not onboarding_step and operator.get("onboarding_status") == "PENDING":
+            onboarding_step = "business_name"
+            state["context_json"]["onboarding_step"] = "business_name"
+            conversation_state.update_state(clean_phone, "ONBOARDING", booking_details=state["context_json"])
+            
+        if onboarding_step in ["business_name", "gst_number", "city"]:
+            handle_onboarding_step(From, clean_phone, Body, onboarding_step, state, operator)
+            return Response(content="<Response></Response>", media_type="application/xml")
+            
     context_history = state["context_json"]["history"]
     
     # Update state with incoming message
@@ -110,7 +125,16 @@ async def receive_webhook(
         handle_confirmation(From, clean_phone, Body, state, operator)
         
     elif intent == "STATUS_UPDATE":
-        handle_status_update(From, clean_phone, Body, operator, truck_as_driver)
+        handle_status_update(
+            From, 
+            clean_phone, 
+            Body, 
+            operator, 
+            truck_as_driver,
+            num_media=NumMedia,
+            media_url=MediaUrl0,
+            media_content_type=MediaContentType0
+        )
         
     elif intent == "QUERY":
         handle_query(From, clean_phone, operator, truck_as_driver)
@@ -122,31 +146,158 @@ async def receive_webhook(
     return Response(content="<Response></Response>", media_type="application/xml")
 
 
-# --- Handler Functions ---
-
-def handle_new_booking(from_whatsapp: str, clean_phone: str, body: str, history: list, state: dict):
-    """Handles the intake of a new booking request."""
-    # Extract details using LLM agent
-    details = intake_agent.extract_freight_details(history[:-1], body)
-    logger.info(f"Extracted details: {details}")
-    
-    origin = details.get("origin")
-    destination = details.get("destination")
-    cargo = details.get("cargo_type")
-    weight = details.get("weight_tons")
-    
-    # Check if we have key fields
-    if not origin or not destination:
-        clarification = (
-            "Kripya details thoda clear likhein.\n"
-            "Mujhe Origin aur Destination city chahiye.\n"
-            "Example: 'Surat se Mumbai 10 ton kapda'"
+def handle_onboarding_step(from_whatsapp: str, clean_phone: str, body: str, step: str, state: dict, operator: dict):
+    """Handles the sequential WhatsApp onboarding steps for operators."""
+    if step == "business_name":
+        business_name = body.strip()
+        supabase_service.update_operator(clean_phone, business_name=business_name)
+        state["context_json"]["onboarding_step"] = "gst_number"
+        conversation_state.update_state(clean_phone, "ONBOARDING", booking_details=state["context_json"])
+        
+        reply = "Dhanyawad! Ab apna GSTIN (GST Number) bhejein. Agar nahi hai, toh 'skip' likhein."
+        twilio_service.send_message(from_whatsapp, reply)
+        
+    elif step == "gst_number":
+        gst_num = body.strip()
+        if gst_num.lower() != "skip":
+            supabase_service.update_operator(clean_phone, gst_number=gst_num)
+        state["context_json"]["onboarding_step"] = "city"
+        conversation_state.update_state(clean_phone, "ONBOARDING", booking_details=state["context_json"])
+        
+        reply = "Aapka city (Shahar) kaunsa hai? Shahar ka naam likh kar bhejein."
+        twilio_service.send_message(from_whatsapp, reply)
+        
+    elif step == "city":
+        city = body.strip()
+        supabase_service.update_operator(clean_phone, city=city, name="Operator", onboarding_status="COMPLETED")
+        state["context_json"]["onboarding_step"] = "completed"
+        # Reset state to OTHER for normal booking
+        conversation_state.update_state(clean_phone, "OTHER", booking_details=state["context_json"])
+        
+        # Log timeline event
+        supabase_service.create_timeline_event(
+            shipment_id=None,
+            phone_number=clean_phone,
+            event_type="operator_onboarded",
+            title="Operator Onboarded",
+            description=f"Operator onboarded successfully. Business Name: {operator.get('business_name') or 'N/A'}, City: {city}"
         )
-        twilio_service.send_message(from_whatsapp, clarification)
-        # Keep intent as NEW_BOOKING so follow-up maintains context
-        conversation_state.update_state(clean_phone, "NEW_BOOKING", booking_details=details)
+        
+        reply = (
+            "Aapka onboarding safaltapoorvak ho gaya hai! 🎉\n"
+            "Ab aap truck book kar sakte hain. Example:\n"
+            "\"Surat se Mumbai 8 ton textiles kal ke liye\""
+        )
+        twilio_service.send_message(from_whatsapp, reply)
+
+
+
+# --- Handler Functionsdef handle_new_booking(from_whatsapp: str, clean_phone: str, body: str, history: list, state: dict):
+    """Handles the intake of a new booking request with details validation, merging, and clarifications."""
+    # 1. Log timeline event: booking request received
+    supabase_service.create_timeline_event(
+        shipment_id=None,
+        phone_number=clean_phone,
+        event_type="booking_request_received",
+        title="Booking Request Received",
+        description=f"Message: {body}"
+    )
+
+    # Retrieve existing details from conversation state to merge
+    existing_details = state["context_json"].get("booking_details", {})
+    if not isinstance(existing_details, dict):
+        existing_details = {}
+
+    # Extract details using LLM agent
+    new_details = intake_agent.extract_freight_details(history[:-1], body)
+    logger.info(f"Extracted details: {new_details}")
+    
+    # Merge new details into existing details (only non-null/non-empty values override)
+    merged_details = {}
+    for key in ["origin", "destination", "cargo_type", "weight_tons", "scheduled_date", "special_requirements"]:
+        merged_details[key] = new_details.get(key) or existing_details.get(key)
+    
+    # Parse confidence
+    confidence = new_details.get("confidence") or existing_details.get("confidence") or "LOW"
+    merged_details["confidence"] = confidence
+    
+    # Log timeline event: AI extraction completed
+    supabase_service.create_timeline_event(
+        shipment_id=None,
+        phone_number=clean_phone,
+        event_type="ai_extraction_completed",
+        title="AI Extraction Completed",
+        description=f"Details: {merged_details}",
+        metadata={"confidence": confidence, "details": merged_details}
+    )
+    
+    # Required fields validation before matching
+    missing_fields = []
+    if not merged_details.get("origin"):
+        missing_fields.append("origin")
+    if not merged_details.get("destination"):
+        missing_fields.append("destination")
+    if not merged_details.get("weight_tons"):
+        missing_fields.append("weight")
+    if not merged_details.get("cargo_type"):
+        missing_fields.append("cargo type")
+        
+    # If confidence is LOW or required fields are missing, ask clarification question
+    if confidence == "LOW" or missing_fields:
+        if len(missing_fields) == 1:
+            field_name = missing_fields[0]
+            if field_name == "origin":
+                question = "Kripya origin city (maal kahan se uthana hai) bata dijiye. Example: Surat"
+            elif field_name == "destination":
+                question = "Kripya destination city (maal kahan bhejna hai) bata dijiye. Example: Mumbai"
+            elif field_name == "weight":
+                question = "Kripya cargo ka weight bata dijiye. Example: 8 ton"
+            else: # cargo type
+                question = "Kripya cargo type (maal kya hai) bata dijiye. Example: textiles"
+        elif len(missing_fields) > 1:
+            named_fields = []
+            examples = []
+            for f in missing_fields:
+                if f == "origin":
+                    named_fields.append("origin city")
+                    examples.append("Surat")
+                elif f == "destination":
+                    named_fields.append("destination city")
+                    examples.append("Mumbai")
+                elif f == "weight":
+                    named_fields.append("weight")
+                    examples.append("8 ton")
+                elif f == "cargo type":
+                    named_fields.append("cargo type")
+                    examples.append("textiles")
+            
+            fields_str = " aur ".join([", ".join(named_fields[:-1]), named_fields[-1]] if len(named_fields) > 1 else named_fields)
+            ex_str = " se ".join(examples[:2]) + (" " + " ".join(examples[2:]) if len(examples) > 2 else "")
+            question = f"Kripya {fields_str} bata dijiye. Example: {ex_str}"
+        else:
+            question = "Mujhe details clear nahi lag rahi hain. Kripya naya booking details fir se bhejein. Example: Surat se Mumbai 8 ton textiles kal ke liye"
+            
+        twilio_service.send_message(from_whatsapp, question)
+        
+        # Log timeline event
+        supabase_service.create_timeline_event(
+            shipment_id=None,
+            phone_number=clean_phone,
+            event_type="clarification_requested",
+            title="Clarification Requested",
+            description=f"Clarified fields: {missing_fields}. Asked: {question}",
+            metadata={"missing_fields": missing_fields, "confidence": confidence}
+        )
+        
+        # Keep intent as NEW_BOOKING, save merged booking details
+        conversation_state.update_state(clean_phone, "NEW_BOOKING", booking_details=merged_details)
         return
         
+    # All fields present, perform matching
+    origin = merged_details["origin"]
+    destination = merged_details["destination"]
+    weight = float(merged_details["weight_tons"])
+    
     # Query trucks matching origin and capacity
     matched_trucks = matching_agent.find_trucks(origin, destination, weight)
     
@@ -159,6 +310,16 @@ def handle_new_booking(from_whatsapp: str, clean_phone: str, body: str, history:
         conversation_state.clear_state(clean_phone)
         return
         
+    # Log timeline event: truck matching completed
+    supabase_service.create_timeline_event(
+        shipment_id=None,
+        phone_number=clean_phone,
+        event_type="truck_matching_completed",
+        title="Truck Matching Completed",
+        description=f"Matched {len(matched_trucks)} trucks for route {origin} to {destination}",
+        metadata={"matched_count": len(matched_trucks), "trucks": matched_trucks}
+    )
+
     # Format and send choices
     choices_msg = matching_agent.format_truck_choices(matched_trucks)
     
@@ -167,7 +328,7 @@ def handle_new_booking(from_whatsapp: str, clean_phone: str, body: str, history:
         phone=clean_phone,
         last_intent="CONFIRMATION",
         matched_trucks=matched_trucks,
-        booking_details=details
+        booking_details=merged_details
     )
     
     # Send WhatsApp choices
@@ -194,25 +355,23 @@ def handle_confirmation(from_whatsapp: str, clean_phone: str, body: str, state: 
     choice_idx = int(choice_digits[0]) - 1
     selected_truck = matched_trucks[choice_idx]
     
-    # Use booking_details if available, fallback to defaults/history reconstruction if missing
-    origin = booking_details.get("origin") or selected_truck.get("home_city")
-    destination = booking_details.get("destination") or "Destination"
-    cargo = booking_details.get("cargo_type") or "General Goods"
+    # Use booking_details strictly (do not reconstruct from history/truck fields)
+    origin = booking_details.get("origin")
+    destination = booking_details.get("destination")
+    cargo = booking_details.get("cargo_type")
+    weight = float(booking_details.get("weight_tons", selected_truck.get("capacity_tons") or 8.0))
+    scheduled_date = booking_details.get("scheduled_date") or "2026-06-09"
     
-    weight = booking_details.get("weight_tons")
-    if weight is None:
-        weight = selected_truck.get("capacity_tons") or 8.0
-    else:
-        weight = float(weight)
-        
-    scheduled_date = booking_details.get("scheduled_date")
-    if not scheduled_date:
-        scheduled_date = "2026-06-09"  # Default tomorrow
-        history_str = " ".join(state["context_json"].get("history", [])).lower()
-        date_match = re.search(r'\b\d{4}-\d{2}-\d{2}\b', history_str)
-        if date_match:
-            scheduled_date = date_match.group(0)
-        
+    # Log timeline event: truck option selected
+    supabase_service.create_timeline_event(
+        shipment_id=None,
+        phone_number=clean_phone,
+        event_type="truck_option_selected",
+        title="Truck Option Selected",
+        description=f"Option {choice_idx + 1} chosen: {selected_truck['truck_number']}",
+        metadata={"choice_index": choice_idx + 1, "truck": selected_truck, "booking_details": booking_details}
+    )
+
     # Create the shipment in the DB
     shipment = supabase_service.create_shipment(
         operator_id=operator["id"],
@@ -230,6 +389,16 @@ def handle_confirmation(from_whatsapp: str, clean_phone: str, body: str, state: 
         twilio_service.send_message(from_whatsapp, error_msg)
         return
         
+    # Log timeline event: shipment confirmed
+    supabase_service.create_timeline_event(
+        shipment_id=shipment["id"],
+        phone_number=clean_phone,
+        event_type="shipment_confirmed",
+        title="Shipment Confirmed",
+        description=f"Shipment ID SHP_{shipment['id'][:4].upper()} created.",
+        metadata={"shipment": shipment}
+    )
+
     # Mark truck as unavailable and update current city to origin
     supabase_service.update_truck_availability(
         truck_id=selected_truck["id"],
@@ -249,6 +418,16 @@ def handle_confirmation(from_whatsapp: str, clean_phone: str, body: str, state: 
         ewb_pdf_url=pdf_url
     )
     
+    # Log timeline event: EWB draft generated
+    supabase_service.create_timeline_event(
+        shipment_id=shipment["id"],
+        phone_number=clean_phone,
+        event_type="ewb_draft_generated",
+        title="E-Way Bill Draft Generated",
+        description=f"Draft PDF available at {pdf_url}",
+        metadata={"ewb_fields": ewb_fields, "pdf_url": pdf_url}
+    )
+
     # Clear matching state, set active shipment
     conversation_state.update_state(
         phone=clean_phone,
@@ -292,10 +471,28 @@ def handle_confirmation(from_whatsapp: str, clean_phone: str, body: str, state: 
         body=driver_assignment_msg,
         shipment_id=shipment["id"]
     )
+    
+    # Log timeline event: driver notified
+    supabase_service.create_timeline_event(
+        shipment_id=shipment["id"],
+        phone_number=selected_truck["driver_phone"],
+        event_type="driver_notified",
+        title="Driver Notified",
+        description=f"Notification sent to driver {selected_truck['driver_name']}"
+    )
 
 
-def handle_status_update(from_whatsapp: str, clean_phone: str, body: str, operator: dict, truck_as_driver: dict):
-    """Handles status updates from driver or operator."""
+def handle_status_update(
+    from_whatsapp: str, 
+    clean_phone: str, 
+    body: str, 
+    operator: dict, 
+    truck_as_driver: dict,
+    num_media: int = 0,
+    media_url: str = None,
+    media_content_type: str = None
+):
+    """Handles status updates from driver or operator with POD support."""
     # Check if sender is driver of an active shipment
     if truck_as_driver:
         shipment = supabase_service.get_active_shipment_for_driver(clean_phone)
@@ -308,17 +505,99 @@ def handle_status_update(from_whatsapp: str, clean_phone: str, body: str, operat
         new_status = parsed["status"]
         note = parsed["note"]
         
+        # Log timeline event: driver status received
+        supabase_service.create_timeline_event(
+            shipment_id=shipment["id"],
+            phone_number=clean_phone,
+            event_type="driver_status_received",
+            title="Driver Status Received",
+            description=f"Message: {body}",
+            metadata={"parsed_status": new_status, "note": note}
+        )
+
         if new_status == "UNKNOWN":
             # Forward unparsed message to operator as-is
-            op_whatsapp = f"whatsapp:{supabase_service.get_operator_by_phone(shipment['operator_id'])}"
-            forward_msg = f"Driver ka message (Direct): \"{body}\""
-            twilio_service.send_message(op_whatsapp, forward_msg, shipment_id=shipment["id"])
+            op_phone = None
+            if not supabase_service.is_mock_active():
+                try:
+                    op_res = supabase_service.supabase_client.table("operators").select("phone").eq("id", shipment["operator_id"]).execute()
+                    if op_res.data:
+                        op_phone = op_res.data[0]["phone"]
+                except Exception as e:
+                    logger.error(f"Error fetching operator phone for forwarding: {e}")
+            else:
+                for op in supabase_service.MOCK_OPERATORS.values():
+                    if op["id"] == shipment["operator_id"]:
+                        op_phone = op["phone"]
+            if op_phone:
+                op_whatsapp = f"whatsapp:{op_phone}"
+                forward_msg = f"Driver ka message (Direct): \"{body}\""
+                twilio_service.send_message(op_whatsapp, forward_msg, shipment_id=shipment["id"])
             twilio_service.send_message(from_whatsapp, "Message operator ko forward kar diya gaya hai.")
             return
             
-        # Update shipment status
-        supabase_service.update_shipment_status(shipment["id"], new_status)
+        # Check if DELIVERED and media present (Proof of Delivery)
+        pod_status = None
+        pod_note = None
+        pod_media_url = None
+        pod_received_at = None
         
+        if new_status == "DELIVERED":
+            if num_media > 0 or media_url:
+                pod_status = "RECEIVED"
+                pod_note = body
+                pod_media_url = media_url
+                import datetime
+                pod_received_at = datetime.datetime.now().isoformat()
+                
+                # Log timeline event: proof_of_delivery_received
+                supabase_service.create_timeline_event(
+                    shipment_id=shipment["id"],
+                    phone_number=clean_phone,
+                    event_type="proof_of_delivery_received",
+                    title="Proof of Delivery Received",
+                    description=f"POD Note: {body}",
+                    metadata={"pod_media_url": media_url, "pod_note": body}
+                )
+            else:
+                pod_status = "PENDING"
+        
+        # Update shipment status (and POD if DELIVERED)
+        supabase_service.update_shipment_status(
+            shipment_id=shipment["id"],
+            status=new_status,
+            pod_status=pod_status,
+            pod_note=pod_note,
+            pod_media_url=pod_media_url,
+            pod_received_at=pod_received_at
+        )
+        
+        # Log status transition timeline events
+        if new_status == "LOADED":
+            supabase_service.create_timeline_event(
+                shipment_id=shipment["id"],
+                phone_number=clean_phone,
+                event_type="shipment_loaded",
+                title="Shipment Loaded",
+                description="Maal load ho gaya hai."
+            )
+        elif new_status == "IN_TRANSIT":
+            supabase_service.create_timeline_event(
+                shipment_id=shipment["id"],
+                phone_number=clean_phone,
+                event_type="shipment_in_transit",
+                title="Shipment In Transit",
+                description="Truck route par nikal chuka hai."
+            )
+        elif new_status == "DELIVERED":
+            supabase_service.create_timeline_event(
+                shipment_id=shipment["id"],
+                phone_number=clean_phone,
+                event_type="shipment_delivered",
+                title="Shipment Delivered",
+                description="Trip safaltapoorvak deliver ho gayi."
+            )
+            
         # If DELIVERED, release the truck and set current_city
         if new_status == "DELIVERED":
             supabase_service.update_truck_availability(
@@ -327,22 +606,6 @@ def handle_status_update(from_whatsapp: str, clean_phone: str, body: str, operat
                 current_city=shipment["destination"]
             )
             
-        # Relay update to Operator
-        operator_data = supabase_service.get_operator_by_phone(clean_phone) # fallback
-        # In reality, fetch operator phone
-        # Get operator details
-        try:
-            # Look up operator phone
-            # Simple query using operator_id
-            # In supabase_service we don't have get_operator_by_id directly, but we can query by ID
-            # Let's fallback or fetch operator
-            pass
-        except:
-            pass
-            
-        # For simplicity, we can fetch operator by querying the DB
-        # To notify operator, let's look up phone
-        # Let's print update to console and send notification
         status_text = {
             "LOADED": "LOADED (Maal load ho gaya hai)",
             "IN_TRANSIT": "IN_TRANSIT (Truck nikal gaya hai)",
@@ -350,10 +613,7 @@ def handle_status_update(from_whatsapp: str, clean_phone: str, body: str, operat
             "DELAYED": "DELAYED (Trip mein delay reported)"
         }.get(new_status, new_status)
         
-        # Notify operator (we can do it if operator records have phone numbers)
-        # Let's fetch operator phone from operators table
-        # We can implement a get_operator_by_id helper or query directly
-        # Let's query operators table if supabase is active
+        # Notify operator
         op_phone = None
         if not supabase_service.is_mock_active():
             try:
@@ -363,7 +623,6 @@ def handle_status_update(from_whatsapp: str, clean_phone: str, body: str, operat
             except Exception as e:
                 logger.error(f"Error fetching operator phone for notification: {e}")
         else:
-            # Mock lookup
             for op in supabase_service.MOCK_OPERATORS.values():
                 if op["id"] == shipment["operator_id"]:
                     op_phone = op["phone"]
@@ -377,6 +636,9 @@ def handle_status_update(from_whatsapp: str, clean_phone: str, body: str, operat
                 f"Status: {status_text}\n"
                 f"Note: {note}"
             )
+            if pod_media_url:
+                op_notification += f"\nProof of Delivery: {pod_media_url}"
+                
             twilio_service.send_message(op_whatsapp, op_notification, shipment_id=shipment["id"])
             
         # Respond to driver
@@ -399,6 +661,15 @@ def handle_status_update(from_whatsapp: str, clean_phone: str, body: str, operat
                     is_available=True,
                     current_city=shipment["destination"]
                 )
+            
+            event_title = f"Shipment {new_status.replace('_', ' ').capitalize()}"
+            supabase_service.create_timeline_event(
+                shipment_id=shipment["id"],
+                phone_number=clean_phone,
+                event_type=f"shipment_{new_status.lower()}",
+                title=event_title,
+                description=f"Status updated manually by operator to {new_status}"
+            )
             twilio_service.send_message(from_whatsapp, f"Trip status updated manually to: {new_status}")
         else:
             twilio_service.send_message(from_whatsapp, f"Trip ID: {shipment['id'][:8].upper()} current status is: {shipment['status']}")
@@ -455,3 +726,4 @@ def handle_other(from_whatsapp: str, clean_phone: str):
     )
     twilio_service.send_message(from_whatsapp, reply)
     conversation_state.clear_state(clean_phone)
+

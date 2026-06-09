@@ -36,6 +36,8 @@ MOCK_TRUCKS = [
 MOCK_SHIPMENTS = {}
 MOCK_MESSAGES = []
 MOCK_CONVERSATIONS = {}
+MOCK_SHIPMENT_EVENTS = []
+
 
 def is_mock_active() -> bool:
     return IS_MOCK
@@ -58,24 +60,57 @@ def get_operator_by_phone(phone: str):
         logger.error(f"Error getting operator: {e}")
         return handle_error(get_operator_by_phone, phone)
 
-def create_operator(phone: str, name: str = None, business_name: str = None, city: str = None):
+def create_operator(phone: str, name: str = None, business_name: str = None, city: str = None, onboarding_status: str = "PENDING"):
     if IS_MOCK:
         operator = {
             "id": f"op_{len(MOCK_OPERATORS) + 1}",
             "phone": phone,
             "name": name or "Unknown",
-            "business_name": business_name or "Unknown Business",
-            "city": city or "Unknown City"
+            "business_name": business_name,
+            "gst_number": None,
+            "city": city,
+            "onboarding_status": onboarding_status
         }
         MOCK_OPERATORS[phone] = operator
         return operator
     try:
-        data = {"phone": phone, "name": name, "business_name": business_name, "city": city}
+        data = {
+            "phone": phone, 
+            "name": name, 
+            "business_name": business_name, 
+            "city": city,
+            "onboarding_status": onboarding_status
+        }
         res = supabase_client.table("operators").insert(data).execute()
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error creating operator: {e}")
-        return handle_error(create_operator, phone, name, business_name, city)
+        return handle_error(create_operator, phone, name, business_name, city, onboarding_status)
+
+def update_operator(phone: str, name: str = None, business_name: str = None, gst_number: str = None, city: str = None, onboarding_status: str = None):
+    if IS_MOCK:
+        op = MOCK_OPERATORS.get(phone)
+        if op:
+            if name is not None: op["name"] = name
+            if business_name is not None: op["business_name"] = business_name
+            if gst_number is not None: op["gst_number"] = gst_number
+            if city is not None: op["city"] = city
+            if onboarding_status is not None: op["onboarding_status"] = onboarding_status
+            return op
+        return None
+    try:
+        data = {}
+        if name is not None: data["name"] = name
+        if business_name is not None: data["business_name"] = business_name
+        if gst_number is not None: data["gst_number"] = gst_number
+        if city is not None: data["city"] = city
+        if onboarding_status is not None: data["onboarding_status"] = onboarding_status
+        res = supabase_client.table("operators").update(data).eq("phone", phone).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        logger.error(f"Error updating operator: {e}")
+        return handle_error(update_operator, phone, name, business_name, gst_number, city, onboarding_status)
+
 
 # --- Trucks Operations ---
 
@@ -273,7 +308,9 @@ def get_shipments_with_details():
             details.append({
                 **s,
                 "truck": truck,
-                "operator": operator
+                "operator": operator,
+                "trucks": truck,
+                "operators": operator
             })
         return details
     try:
@@ -283,7 +320,16 @@ def get_shipments_with_details():
         logger.error(f"Error getting detailed shipments: {e}")
         return handle_error(get_shipments_with_details)
 
-def update_shipment_status(shipment_id: str, status: str, ewb_draft_json: dict = None, ewb_pdf_url: str = None):
+def update_shipment_status(
+    shipment_id: str, 
+    status: str, 
+    ewb_draft_json: dict = None, 
+    ewb_pdf_url: str = None,
+    pod_status: str = None,
+    pod_note: str = None,
+    pod_media_url: str = None,
+    pod_received_at: str = None
+):
     import datetime
     now_iso = datetime.datetime.now().isoformat()
     if IS_MOCK:
@@ -301,6 +347,14 @@ def update_shipment_status(shipment_id: str, status: str, ewb_draft_json: dict =
                 s["ewb_draft_json"] = ewb_draft_json
             if ewb_pdf_url is not None:
                 s["ewb_pdf_url"] = ewb_pdf_url
+            if pod_status is not None:
+                s["pod_status"] = pod_status
+            if pod_note is not None:
+                s["pod_note"] = pod_note
+            if pod_media_url is not None:
+                s["pod_media_url"] = pod_media_url
+            if pod_received_at is not None:
+                s["pod_received_at"] = pod_received_at
             return s
         return None
     try:
@@ -315,11 +369,21 @@ def update_shipment_status(shipment_id: str, status: str, ewb_draft_json: dict =
             data["ewb_draft_json"] = ewb_draft_json
         if ewb_pdf_url is not None:
             data["ewb_pdf_url"] = ewb_pdf_url
+        if pod_status is not None:
+            data["pod_status"] = pod_status
+        if pod_note is not None:
+            data["pod_note"] = pod_note
+        if pod_media_url is not None:
+            data["pod_media_url"] = pod_media_url
+        if pod_received_at is not None:
+            data["pod_received_at"] = pod_received_at
+            
         res = supabase_client.table("shipments").update(data).eq("id", shipment_id).execute()
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error updating shipment: {e}")
-        return handle_error(update_shipment_status, shipment_id, status, ewb_draft_json, ewb_pdf_url)
+        return handle_error(update_shipment_status, shipment_id, status, ewb_draft_json, ewb_pdf_url, pod_status, pod_note, pod_media_url, pod_received_at)
+
 
 def get_active_shipment_for_operator(operator_id: str):
     if IS_MOCK:
@@ -457,3 +521,73 @@ def upload_ewb_pdf_bytes(shipment_id: str, pdf_bytes: bytes) -> str:
     except Exception as e:
         logger.error(f"Error uploading PDF: {e}")
         return handle_error(upload_ewb_pdf_bytes, shipment_id, pdf_bytes)
+
+# --- Shipment Events (Timeline) Operations ---
+
+def create_timeline_event(shipment_id: str = None, phone_number: str = None, event_type: str = "", title: str = "", description: str = None, metadata: dict = None):
+    import datetime
+    now_iso = datetime.datetime.now().isoformat()
+    try:
+        if IS_MOCK:
+            event = {
+                "id": f"evt_{len(MOCK_SHIPMENT_EVENTS) + 1}",
+                "shipment_id": shipment_id,
+                "phone_number": phone_number,
+                "event_type": event_type,
+                "title": title,
+                "description": description,
+                "metadata": metadata or {},
+                "created_at": now_iso
+            }
+            MOCK_SHIPMENT_EVENTS.append(event)
+            return event
+
+        data = {
+            "shipment_id": shipment_id,
+            "phone_number": phone_number,
+            "event_type": event_type,
+            "title": title,
+            "description": description,
+            "metadata": metadata or {}
+        }
+        res = supabase_client.table("shipment_events").insert(data).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        logger.error(f"Error logging timeline event {event_type}: {e}")
+        # Safeguard: Fallback to mock log instead of crashing
+        try:
+            event = {
+                "id": f"evt_fallback_{len(MOCK_SHIPMENT_EVENTS) + 1}",
+                "shipment_id": shipment_id,
+                "phone_number": phone_number,
+                "event_type": event_type,
+                "title": title,
+                "description": description,
+                "metadata": metadata or {},
+                "created_at": now_iso
+            }
+            MOCK_SHIPMENT_EVENTS.append(event)
+            return event
+        except Exception:
+            return None
+
+def get_timeline_for_shipment(shipment_id: str):
+    if IS_MOCK:
+        return [evt for evt in MOCK_SHIPMENT_EVENTS if evt["shipment_id"] == shipment_id]
+    try:
+        res = supabase_client.table("shipment_events").select("*").eq("shipment_id", shipment_id).order("created_at", desc=False).execute()
+        return res.data
+    except Exception as e:
+        logger.error(f"Error getting timeline for shipment {shipment_id}: {e}")
+        return [evt for evt in MOCK_SHIPMENT_EVENTS if evt["shipment_id"] == shipment_id]
+
+def get_recent_timeline_events(limit: int = 50):
+    if IS_MOCK:
+        return sorted(MOCK_SHIPMENT_EVENTS, key=lambda x: x["created_at"], reverse=True)[:limit]
+    try:
+        res = supabase_client.table("shipment_events").select("*").order("created_at", desc=True).limit(limit).execute()
+        return res.data
+    except Exception as e:
+        logger.error(f"Error getting recent timeline events: {e}")
+        return sorted(MOCK_SHIPMENT_EVENTS, key=lambda x: x["created_at"], reverse=True)[:limit]
+

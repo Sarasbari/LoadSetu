@@ -11,11 +11,29 @@ export default function Dashboard() {
     delayed: 0
   });
 
+  // Timeline and detail states
+  const [selectedShipment, setSelectedShipment] = useState(null);
+  const [timeline, setTimeline] = useState([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState(null);
+
+  // Simulation states
+  const [simulating, setSimulating] = useState(false);
+  const [simulationStatus, setSimulationStatus] = useState('');
+
   const fetchData = async () => {
     try {
       const data = await api.get('/shipments', { page: 1, limit: 100 });
       const list = data.shipments || [];
       setShipments(list);
+
+      // Refresh drawer info if open
+      if (selectedShipment) {
+        const updated = list.find(s => s.id === selectedShipment.id);
+        if (updated) {
+          setSelectedShipment(updated);
+        }
+      }
 
       // Compute Stats
       const total = list.length;
@@ -41,9 +59,54 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30000);
+    const interval = setInterval(fetchData, 10000); // Poll every 10 seconds for real-time sandbox feel
     return () => clearInterval(interval);
-  }, []);
+  }, [selectedShipment]);
+
+  const fetchTimeline = async (shipmentId) => {
+    setTimelineLoading(true);
+    setTimelineError(null);
+    try {
+      const data = await api.get(`/shipments/${shipmentId}/timeline`);
+      setTimeline(data.timeline || []);
+    } catch (error) {
+      console.error("Failed to load timeline:", error);
+      setTimelineError("Failed to load timeline.");
+    } finally {
+      setTimelineLoading(false);
+    }
+  };
+
+  const handleShipmentClick = (shipment) => {
+    setSelectedShipment(shipment);
+    setTimeline([]);
+    fetchTimeline(shipment.id);
+  };
+
+  const handleSimulate = async (endpoint, statusText) => {
+    setSimulating(true);
+    setSimulationStatus(statusText);
+    try {
+      const res = await api.post(endpoint);
+      setSimulationStatus(`Success: ${res.message || 'Operation succeeded'}`);
+      await fetchData(); // Refresh table
+      
+      // If details drawer is open, refresh timeline
+      if (selectedShipment) {
+        // Use timeout to allow database update processing
+        setTimeout(() => {
+          fetchTimeline(selectedShipment.id);
+        }, 500);
+      }
+      
+      setTimeout(() => setSimulationStatus(''), 4000);
+    } catch (error) {
+      setSimulationStatus(`Error: ${error.message || 'Simulation failed'}`);
+      setTimeout(() => setSimulationStatus(''), 5000);
+    } finally {
+      setSimulating(false);
+    }
+  };
 
   const formatTime = (isoString) => {
     if (!isoString) return 'N/A';
@@ -82,7 +145,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', position: 'relative' }}>
       {/* Consistent Header */}
       <header className="app-header">
         <h2 className="page-title">Live Operations Control</h2>
@@ -96,6 +159,70 @@ export default function Dashboard() {
 
       {/* Main Content Body */}
       <div className="content-body">
+        {/* Compact Demo Controls Section */}
+        <div className="table-panel" style={{ marginBottom: '24px', padding: '20px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+            <h3 className="table-panel-title" style={{ margin: 0 }}>Sandbox Simulation Controls</h3>
+            {simulationStatus && (
+              <span style={{ 
+                fontSize: '13px', 
+                color: simulationStatus.startsWith('Error') ? 'var(--badge-danger-text)' : 'var(--color-saffron)', 
+                fontWeight: 700, 
+                fontFamily: 'var(--font-display)' 
+              }}>
+                {simulationStatus}
+              </span>
+            )}
+          </div>
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <button 
+              id="btn-seed-demo" 
+              className="btn-refresh" 
+              onClick={() => handleSimulate('/demo/seed', 'Resetting and seeding demo...')} 
+              disabled={simulating}
+              style={{ fontWeight: 700 }}
+            >
+              Seed Demo
+            </button>
+            <button 
+              id="btn-sim-booking" 
+              className="btn-refresh" 
+              onClick={() => handleSimulate('/demo/simulate-booking', 'Simulating incoming operator booking message...')} 
+              disabled={simulating}
+              style={{ fontWeight: 700 }}
+            >
+              Simulate New Booking
+            </button>
+            <button 
+              id="btn-sim-loaded" 
+              className="btn-refresh" 
+              onClick={() => handleSimulate('/demo/simulate-loaded', 'Simulating driver loading status...')} 
+              disabled={simulating}
+              style={{ fontWeight: 700 }}
+            >
+              Simulate Driver Loaded
+            </button>
+            <button 
+              id="btn-sim-delivered" 
+              className="btn-refresh" 
+              onClick={() => handleSimulate('/demo/simulate-delivered', 'Simulating shipment delivery and POD submission...')} 
+              disabled={simulating}
+              style={{ fontWeight: 700 }}
+            >
+              Simulate Driver Delivered
+            </button>
+            <button 
+              id="btn-trigger-delay" 
+              className="btn-refresh" 
+              onClick={() => handleSimulate('/demo/trigger-delay', 'Simulating pickup deadline delay alert...')} 
+              disabled={simulating}
+              style={{ fontWeight: 700, color: 'var(--badge-danger-text)' }}
+            >
+              Trigger Delay Alert
+            </button>
+          </div>
+        </div>
+
         {/* Statistics Grid */}
         <div className="stats-grid">
           <div className="card-stat">
@@ -186,7 +313,12 @@ export default function Dashboard() {
                   </tr>
                 ) : (
                   shipments.map((s) => (
-                    <tr key={s.id}>
+                    <tr 
+                      key={s.id} 
+                      onClick={() => handleShipmentClick(s)} 
+                      style={{ cursor: 'pointer' }}
+                      id={`shipment-row-${s.id.substring(0, 4)}`}
+                    >
                       <td className="trip-id-text">
                         SHP_{s.id.substring(0, 4).toUpperCase()}
                       </td>
@@ -197,8 +329,8 @@ export default function Dashboard() {
                         <div>{s.cargo_type} / {s.weight_tons} Tons</div>
                       </td>
                       <td>
-                        {s.trucks ? (
-                          <div style={{ fontWeight: 600 }}>{s.trucks.truck_number}</div>
+                        {s.trucks || s.truck ? (
+                          <div style={{ fontWeight: 600 }}>{(s.trucks || s.truck).truck_number}</div>
                         ) : (
                           <span style={{ color: 'var(--color-text-muted)' }}>Not Assigned</span>
                         )}
@@ -210,7 +342,13 @@ export default function Dashboard() {
                       </td>
                       <td>
                         {s.ewb_pdf_url ? (
-                          <a href={s.ewb_pdf_url} target="_blank" rel="noopener noreferrer" className="ewb-link">
+                          <a 
+                            href={s.ewb_pdf_url} 
+                            target="_blank" 
+                            rel="noopener noreferrer" 
+                            className="ewb-link"
+                            onClick={(e) => e.stopPropagation()} // Stop row click
+                          >
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
                             </svg>
@@ -229,6 +367,247 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* Slide-over Right Side Panel */}
+      {selectedShipment && (
+        <div 
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            backgroundColor: 'rgba(15, 23, 42, 0.4)',
+            zIndex: 100,
+            display: 'flex',
+            justifyContent: 'flex-end',
+            transition: 'opacity 0.3s ease'
+          }} 
+          onClick={() => setSelectedShipment(null)}
+          id="shipment-detail-drawer"
+        >
+          <div 
+            style={{
+              width: '480px',
+              height: '100%',
+              backgroundColor: '#ffffff',
+              borderLeft: '1px solid var(--color-border)',
+              boxShadow: '-4px 0 24px rgba(0, 0, 0, 0.1)',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden'
+            }} 
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div style={{
+              padding: '24px',
+              borderBottom: '1px solid var(--color-border)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <div>
+                <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Shipment Details</span>
+                <h3 className="page-title" style={{ marginTop: '4px' }}>SHP_{selectedShipment.id.substring(0, 4).toUpperCase()}</h3>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <span className={`badge-pill ${getStatusClass(selectedShipment.status)}`}>
+                  {selectedShipment.status}
+                </span>
+                <button 
+                  onClick={() => setSelectedShipment(null)} 
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    fontSize: '24px',
+                    color: 'var(--color-text-muted)',
+                    cursor: 'pointer',
+                    lineHeight: 1
+                  }}
+                  id="btn-close-drawer"
+                >
+                  &times;
+                </button>
+              </div>
+            </div>
+
+            {/* Drawer Content Area */}
+            <div style={{ padding: '24px', overflowY: 'auto', flexGrow: 1, display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              {/* Route & Cargo */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', background: '#f8fafc', padding: '16px', borderRadius: '8px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                  <span style={{ color: 'var(--color-text-secondary)', fontWeight: 600 }}>Route</span>
+                  <span style={{ fontWeight: 700 }}>{selectedShipment.origin} ➔ {selectedShipment.destination}</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                  <span style={{ color: 'var(--color-text-secondary)', fontWeight: 600 }}>Cargo</span>
+                  <span style={{ fontWeight: 600 }}>{selectedShipment.cargo_type} ({selectedShipment.weight_tons} Tons)</span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px' }}>
+                  <span style={{ color: 'var(--color-text-secondary)', fontWeight: 600 }}>Date</span>
+                  <span style={{ fontWeight: 600 }}>{selectedShipment.scheduled_date || 'N/A'}</span>
+                </div>
+              </div>
+
+              {/* Operator */}
+              <div>
+                <h4 style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)', marginBottom: '8px', fontWeight: 700 }}>Operator (Sender)</h4>
+                {selectedShipment.operators || selectedShipment.operator ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
+                    <div><strong>Business:</strong> {(selectedShipment.operators || selectedShipment.operator).business_name || 'N/A'}</div>
+                    <div><strong>Phone:</strong> {(selectedShipment.operators || selectedShipment.operator).phone}</div>
+                    <div><strong>Location:</strong> {(selectedShipment.operators || selectedShipment.operator).city || 'N/A'}</div>
+                  </div>
+                ) : (
+                  <div style={{ color: 'var(--color-text-muted)' }}>No Operator Details</div>
+                )}
+              </div>
+
+              {/* Driver & Truck */}
+              <div>
+                <h4 style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)', marginBottom: '8px', fontWeight: 700 }}>Truck & Driver</h4>
+                {selectedShipment.trucks || selectedShipment.truck ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px' }}>
+                    <div><strong>Truck Number:</strong> {(selectedShipment.trucks || selectedShipment.truck).truck_number}</div>
+                    <div><strong>Driver:</strong> {(selectedShipment.trucks || selectedShipment.truck).driver_name} ({(selectedShipment.trucks || selectedShipment.truck).driver_phone})</div>
+                    <div><strong>Type / Capacity:</strong> {(selectedShipment.trucks || selectedShipment.truck).truck_type} / {(selectedShipment.trucks || selectedShipment.truck).capacity_tons} Tons</div>
+                  </div>
+                ) : (
+                  <div style={{ color: 'var(--color-text-muted)' }}>No Truck Details</div>
+                )}
+              </div>
+
+              {/* E-Way Bill Download Link */}
+              {selectedShipment.ewb_pdf_url && (
+                <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '16px' }}>
+                  <h4 style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)', marginBottom: '8px', fontWeight: 700 }}>E-Way Bill</h4>
+                  <a href={selectedShipment.ewb_pdf_url} target="_blank" rel="noopener noreferrer" className="ewb-link" style={{ fontSize: '13px' }}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                    </svg>
+                    Download Generated EWB Draft PDF
+                  </a>
+                </div>
+              )}
+
+              {/* Proof of Delivery (POD) */}
+              <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '16px' }} id="shipment-pod-section">
+                <h4 style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)', marginBottom: '8px', fontWeight: 700 }}>Proof of Delivery (POD)</h4>
+                {selectedShipment.pod_status === 'RECEIVED' ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '13px', background: '#f0fdf4', padding: '12px', borderRadius: '8px', border: '1px solid #bbf7d0' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#15803d', fontWeight: 700 }}>
+                      <span>✅ Proof of Delivery Received</span>
+                    </div>
+                    {selectedShipment.pod_received_at && (
+                      <div style={{ color: 'var(--color-text-secondary)', fontSize: '11px' }}>
+                        <strong>Received:</strong> {new Date(selectedShipment.pod_received_at).toLocaleString()}
+                      </div>
+                    )}
+                    {selectedShipment.pod_note && (
+                      <div>
+                        <strong>Driver Note:</strong> "{selectedShipment.pod_note}"
+                      </div>
+                    )}
+                    {selectedShipment.pod_media_url && (
+                      <div style={{ marginTop: '8px' }}>
+                        <strong>Proof Document:</strong>
+                        <div style={{ marginTop: '4px' }}>
+                          <a href={selectedShipment.pod_media_url} target="_blank" rel="noopener noreferrer" style={{ display: 'block' }}>
+                            <img 
+                              src={selectedShipment.pod_media_url.includes('dummy.supabase.co') ? 'https://images.unsplash.com/photo-1554415707-6e8cfc93fe23?w=300&auto=format&fit=crop&q=60' : selectedShipment.pod_media_url} 
+                              alt="Proof of Delivery Receipt" 
+                              style={{ maxWidth: '100%', maxHeight: '180px', borderRadius: '6px', border: '1px solid var(--color-border)', display: 'block', objectFit: 'cover' }} 
+                            />
+                          </a>
+                          <a href={selectedShipment.pod_media_url} target="_blank" rel="noopener noreferrer" className="ewb-link" style={{ marginTop: '6px', fontSize: '12px' }}>View Full Image</a>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div style={{ color: 'var(--color-text-muted)', fontSize: '13px' }}>
+                    Pending delivery confirmation from driver.
+                  </div>
+                )}
+              </div>
+
+              {/* Trust Timeline */}
+              <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '16px' }} id="shipment-timeline-section">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <h4 style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)', fontWeight: 700 }}>Trust Timeline / Audit Trail</h4>
+                  <button className="btn-refresh" onClick={() => fetchTimeline(selectedShipment.id)} style={{ padding: '4px 8px', fontSize: '10px' }}>
+                    Refresh
+                  </button>
+                </div>
+                
+                {timelineLoading ? (
+                  <div style={{ color: 'var(--color-text-secondary)', fontSize: '13px' }}>Loading timeline...</div>
+                ) : timelineError ? (
+                  <div style={{ color: 'var(--badge-danger-text)', fontSize: '13px' }}>{timelineError}</div>
+                ) : timeline.length === 0 ? (
+                  <div style={{ color: 'var(--color-text-muted)', fontSize: '13px' }}>No timeline events found.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', position: 'relative', paddingLeft: '20px' }}>
+                    {/* Vertical connector line */}
+                    <div style={{
+                      position: 'absolute',
+                      top: '6px',
+                      bottom: '6px',
+                      left: '6px',
+                      width: '2px',
+                      backgroundColor: 'var(--color-border)',
+                      zIndex: 0
+                    }}></div>
+                    
+                    {timeline.map((event) => {
+                      const isDelay = event.event_type === 'delay_alert_triggered';
+                      const isConfirmed = event.event_type === 'shipment_confirmed' || event.event_type === 'shipment_confirmed_manual';
+                      const isPod = event.event_type === 'proof_of_delivery_received';
+                      const isDelivered = event.event_type === 'shipment_delivered';
+                      const isOnboarded = event.event_type === 'operator_onboarded';
+                      
+                      let markerBg = 'var(--color-border)';
+                      if (isDelay) markerBg = 'var(--badge-danger-text)';
+                      else if (isConfirmed || isPod || isDelivered || isOnboarded) markerBg = 'var(--badge-success-text)';
+                      else if (event.event_type.startsWith('ai_') || event.event_type.startsWith('booking_')) markerBg = 'var(--color-saffron)';
+                      
+                      return (
+                        <div key={event.id} style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', gap: '4px' }} className="timeline-event-item">
+                          {/* Circle marker */}
+                          <div style={{
+                            position: 'absolute',
+                            left: '-20px',
+                            top: '4px',
+                            width: '12px',
+                            height: '12px',
+                            borderRadius: '50%',
+                            backgroundColor: markerBg,
+                            border: '2px solid #ffffff',
+                            boxShadow: '0 0 0 2px rgba(0, 0, 0, 0.05)'
+                          }}></div>
+                          
+                          <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--color-text-primary)' }}>
+                            {event.title}
+                          </div>
+                          {event.description && (
+                            <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', lineHeight: 1.3 }}>
+                              {event.description}
+                            </div>
+                          )}
+                          <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)' }}>
+                            {new Date(event.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} | {new Date(event.created_at).toLocaleDateString()}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

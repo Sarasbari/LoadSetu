@@ -79,6 +79,15 @@ async def check_delayed_shipments():
                         .update({"status": "DELAYED", "delay_alerted": True})\
                         .eq("id", shipment["id"]).execute()
                 
+                # Create timeline event for the delay
+                supabase_service.create_timeline_event(
+                    shipment_id=shipment["id"],
+                    phone_number=None,
+                    event_type="delay_alert_triggered",
+                    title="Delay Alert Triggered",
+                    description=f"Pickup delay flagged. Scheduled time was {scheduled_date_str} 10:00 AM."
+                )
+                
                 # Fetch driver details
                 truck = supabase_service.get_truck_by_id(shipment["truck_id"])
                 driver_name = truck.get("driver_name", "Driver") if truck else "Driver"

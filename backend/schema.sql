@@ -115,3 +115,26 @@ VALUES
   ('Karan Johar', '+919876543221', 'MH-12-PQ-8899', 'open', 10.00, 'Pune', 'Pune', true, 'Pune to Mumbai specialist'),
   ('Mohammad Ali', '+919876543222', 'GJ-05-AA-5555', 'flatbed', 15.00, 'Surat', 'Surat', true, 'Heavy machinery transport')
 ON CONFLICT DO NOTHING;
+
+-- Table: shipment_events (Audit trail)
+CREATE TABLE IF NOT EXISTS shipment_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    shipment_id UUID REFERENCES shipments(id) ON DELETE SET NULL,
+    phone_number TEXT,
+    event_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_shipment_events_shipment_id ON shipment_events(shipment_id);
+
+-- Alter Tables to add POD and Onboarding fields if not exists
+ALTER TABLE shipments ADD COLUMN IF NOT EXISTS pod_status TEXT DEFAULT 'PENDING';
+ALTER TABLE shipments ADD COLUMN IF NOT EXISTS pod_note TEXT;
+ALTER TABLE shipments ADD COLUMN IF NOT EXISTS pod_media_url TEXT;
+ALTER TABLE shipments ADD COLUMN IF NOT EXISTS pod_received_at TIMESTAMPTZ;
+
+ALTER TABLE operators ADD COLUMN IF NOT EXISTS onboarding_status TEXT DEFAULT 'PENDING';
+

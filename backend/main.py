@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 # Import routers
-from routes import health, webhook, shipments, trucks, conversations
+from routes import health, webhook, shipments, trucks, conversations, demo
 from utils.delay_checker import start_delay_checker
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -60,6 +61,8 @@ app.include_router(webhook.router)
 app.include_router(shipments.router)
 app.include_router(trucks.router)
 app.include_router(conversations.router)
+app.include_router(demo.router)
+
 
 @app.get("/")
 async def root():

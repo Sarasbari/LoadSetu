@@ -1,5 +1,5 @@
 import os
-from fastapi import APIRouter, Header, HTTPException, status
+from fastapi import APIRouter, Header, HTTPException, status, Path
 from services import supabase_service
 
 router = APIRouter(prefix="/shipments", tags=["shipments"])
@@ -38,3 +38,14 @@ async def get_shipments(page: int = 1, limit: int = 20, authorization: str = Hea
         "page": page,
         "limit": limit
     }
+
+@router.get("/{shipment_id}/timeline")
+async def get_shipment_timeline(
+    shipment_id: str = Path(...),
+    authorization: str = Header(None)
+):
+    """GET /shipments/{shipment_id}/timeline - Returns chronological timeline events for a shipment."""
+    await verify_admin_token(authorization)
+    events = supabase_service.get_timeline_for_shipment(shipment_id)
+    return {"timeline": events}
+
