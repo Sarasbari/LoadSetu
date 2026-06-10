@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 
 export default function Trucks() {
@@ -20,7 +20,7 @@ export default function Trucks() {
   });
   const [formError, setFormError] = useState('');
 
-  const fetchTrucks = async () => {
+  const fetchTrucks = useCallback(async () => {
     try {
       const data = await api.get('/trucks', { page: 1, limit: 100 });
       setTrucks(data.trucks || []);
@@ -29,11 +29,13 @@ export default function Trucks() {
       console.error("Failed to load trucks:", error);
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchTrucks();
-  }, []);
+    Promise.resolve().then(() => {
+      fetchTrucks();
+    });
+  }, [fetchTrucks]);
 
   const handleToggleAvailability = async (truckId, currentStatus, currentCity) => {
     try {
@@ -88,6 +90,7 @@ export default function Trucks() {
       });
       fetchTrucks();
     } catch (error) {
+      console.error("Failed to register truck:", error);
       setFormError('Failed to add truck. Check console or verify inputs.');
     }
   };

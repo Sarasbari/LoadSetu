@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 
 export default function Dashboard() {
@@ -21,7 +21,10 @@ export default function Dashboard() {
   const [simulating, setSimulating] = useState(false);
   const [simulationStatus, setSimulationStatus] = useState('');
 
-  const fetchData = async () => {
+  // Dispute pack generation state
+  const [generatingDispute, setGeneratingDispute] = useState(false);
+
+  const fetchData = useCallback(async () => {
     try {
       const data = await api.get('/shipments', { page: 1, limit: 100 });
       const list = data.shipments || [];
@@ -55,15 +58,17 @@ export default function Dashboard() {
       console.error("Failed to load shipments:", error);
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 10000); // Poll every 10 seconds for real-time sandbox feel
-    return () => clearInterval(interval);
   }, [selectedShipment]);
 
-  const fetchTimeline = async (shipmentId) => {
+  useEffect(() => {
+    Promise.resolve().then(() => {
+      fetchData();
+    });
+    const interval = setInterval(fetchData, 10000); // Poll every 10 seconds for real-time sandbox feel
+    return () => clearInterval(interval);
+  }, [fetchData]);
+
+  const fetchTimeline = useCallback(async (shipmentId) => {
     setTimelineLoading(true);
     setTimelineError(null);
     try {
@@ -75,12 +80,29 @@ export default function Dashboard() {
     } finally {
       setTimelineLoading(false);
     }
-  };
+  }, []);
 
   const handleShipmentClick = (shipment) => {
     setSelectedShipment(shipment);
     setTimeline([]);
     fetchTimeline(shipment.id);
+  };
+
+  const handleDownloadDisputePack = async (shipmentId) => {
+    setGeneratingDispute(true);
+    try {
+      const res = await api.post(`/shipments/${shipmentId}/dispute-pack`);
+      if (res.pdf_url) {
+        window.open(res.pdf_url, '_blank');
+      } else {
+        alert("Failed to generate dispute packet URL.");
+      }
+    } catch (error) {
+      console.error("Failed to generate dispute pack:", error);
+      alert("Failed to generate dispute pack: " + (error.message || error));
+    } finally {
+      setGeneratingDispute(false);
+    }
   };
 
   const handleSimulate = async (endpoint, statusText) => {
@@ -159,10 +181,10 @@ export default function Dashboard() {
 
       {/* Main Content Body */}
       <div className="content-body">
-        {/* Compact Demo Controls Section */}
+        {/* Compact Guided Simulator Section */}
         <div className="table-panel" style={{ marginBottom: '24px', padding: '20px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
-            <h3 className="table-panel-title" style={{ margin: 0 }}>Sandbox Simulation Controls</h3>
+            <h3 className="table-panel-title" style={{ margin: 0 }}>Step-by-Step Guided Simulator</h3>
             {simulationStatus && (
               <span style={{ 
                 fontSize: '13px', 
@@ -174,52 +196,108 @@ export default function Dashboard() {
               </span>
             )}
           </div>
-          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-            <button 
-              id="btn-seed-demo" 
-              className="btn-refresh" 
-              onClick={() => handleSimulate('/demo/seed', 'Resetting and seeding demo...')} 
-              disabled={simulating}
-              style={{ fontWeight: 700 }}
-            >
-              Seed Demo
-            </button>
-            <button 
-              id="btn-sim-booking" 
-              className="btn-refresh" 
-              onClick={() => handleSimulate('/demo/simulate-booking', 'Simulating incoming operator booking message...')} 
-              disabled={simulating}
-              style={{ fontWeight: 700 }}
-            >
-              Simulate New Booking
-            </button>
-            <button 
-              id="btn-sim-loaded" 
-              className="btn-refresh" 
-              onClick={() => handleSimulate('/demo/simulate-loaded', 'Simulating driver loading status...')} 
-              disabled={simulating}
-              style={{ fontWeight: 700 }}
-            >
-              Simulate Driver Loaded
-            </button>
-            <button 
-              id="btn-sim-delivered" 
-              className="btn-refresh" 
-              onClick={() => handleSimulate('/demo/simulate-delivered', 'Simulating shipment delivery and POD submission...')} 
-              disabled={simulating}
-              style={{ fontWeight: 700 }}
-            >
-              Simulate Driver Delivered
-            </button>
-            <button 
-              id="btn-trigger-delay" 
-              className="btn-refresh" 
-              onClick={() => handleSimulate('/demo/trigger-delay', 'Simulating pickup deadline delay alert...')} 
-              disabled={simulating}
-              style={{ fontWeight: 700, color: 'var(--badge-danger-text)' }}
-            >
-              Trigger Delay Alert
-            </button>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px' }}>
+              <div className="sim-step-card" style={{ border: '1px solid var(--color-border)', borderRadius: '8px', padding: '12px', background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--color-text-secondary)' }}>STEP 1</div>
+                <div style={{ fontSize: '12px', fontWeight: 600 }}>Intake Request</div>
+                <button 
+                  id="btn-sim-booking" 
+                  className="btn-refresh" 
+                  onClick={() => handleSimulate('/demo/simulate-booking', 'Simulating incoming operator booking...')} 
+                  disabled={simulating}
+                  style={{ width: '100%', fontSize: '11px', padding: '6px', fontWeight: 700 }}
+                >
+                  Book Load
+                </button>
+              </div>
+              
+              <div className="sim-step-card" style={{ border: '1px solid var(--color-border)', borderRadius: '8px', padding: '12px', background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--color-text-secondary)' }}>STEP 2</div>
+                <div style={{ fontSize: '12px', fontWeight: 600 }}>Confirm Truck</div>
+                <button 
+                  id="btn-sim-confirm" 
+                  className="btn-refresh" 
+                  onClick={() => handleSimulate('/demo/simulate-confirm', 'Simulating truck selection confirmation...')} 
+                  disabled={simulating}
+                  style={{ width: '100%', fontSize: '11px', padding: '6px', fontWeight: 700 }}
+                >
+                  Confirm Choice
+                </button>
+              </div>
+
+              <div className="sim-step-card" style={{ border: '1px solid var(--color-border)', borderRadius: '8px', padding: '12px', background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--color-text-secondary)' }}>STEP 3</div>
+                <div style={{ fontSize: '12px', fontWeight: 600 }}>Load Cargo</div>
+                <button 
+                  id="btn-sim-loaded" 
+                  className="btn-refresh" 
+                  onClick={() => handleSimulate('/demo/simulate-loaded', 'Simulating driver loaded status...')} 
+                  disabled={simulating}
+                  style={{ width: '100%', fontSize: '11px', padding: '6px', fontWeight: 700 }}
+                >
+                  Set Loaded
+                </button>
+              </div>
+
+              <div className="sim-step-card" style={{ border: '1px solid var(--color-border)', borderRadius: '8px', padding: '12px', background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--color-text-secondary)' }}>STEP 4</div>
+                <div style={{ fontSize: '12px', fontWeight: 600 }}>Start Transit</div>
+                <button 
+                  id="btn-sim-transit" 
+                  className="btn-refresh" 
+                  onClick={() => handleSimulate('/demo/simulate-transit', 'Simulating transit status...')} 
+                  disabled={simulating}
+                  style={{ width: '100%', fontSize: '11px', padding: '6px', fontWeight: 700 }}
+                >
+                  Depart Origin
+                </button>
+              </div>
+
+              <div className="sim-step-card" style={{ border: '1px solid var(--color-border)', borderRadius: '8px', padding: '12px', background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--color-text-secondary)' }}>STEP 5 (Risk)</div>
+                <div style={{ fontSize: '12px', fontWeight: 600 }}>Simulate Delay</div>
+                <button 
+                  id="btn-trigger-delay" 
+                  className="btn-refresh" 
+                  onClick={() => handleSimulate('/demo/trigger-delay', 'Simulating pickup deadline delay...')} 
+                  disabled={simulating}
+                  style={{ width: '100%', fontSize: '11px', padding: '6px', fontWeight: 700, color: 'var(--badge-danger-text)' }}
+                >
+                  Flag Delay
+                </button>
+              </div>
+
+              <div className="sim-step-card" style={{ border: '1px solid var(--color-border)', borderRadius: '8px', padding: '12px', background: '#f8fafc', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--color-text-secondary)' }}>STEP 6</div>
+                <div style={{ fontSize: '12px', fontWeight: 600 }}>Deliver & POD</div>
+                <button 
+                  id="btn-sim-delivered" 
+                  className="btn-refresh" 
+                  onClick={() => handleSimulate('/demo/simulate-delivered', 'Simulating delivery & POD receipt...')} 
+                  disabled={simulating}
+                  style={{ width: '100%', fontSize: '11px', padding: '6px', fontWeight: 700 }}
+                >
+                  Complete Trip
+                </button>
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px dashed var(--color-border)', paddingTop: '12px' }}>
+              <span style={{ fontSize: '12px', color: 'var(--color-text-muted)' }}>
+                Reset database and seed demo data:
+              </span>
+              <button 
+                id="btn-seed-demo" 
+                className="btn-refresh" 
+                onClick={() => handleSimulate('/demo/seed', 'Resetting and seeding demo...')} 
+                disabled={simulating}
+                style={{ fontSize: '12px', fontWeight: 700 }}
+              >
+                Reset & Seed Database
+              </button>
+            </div>
           </div>
         </div>
 
@@ -300,6 +378,7 @@ export default function Dashboard() {
                   <th>Cargo / Weight</th>
                   <th>Truck Number</th>
                   <th>Status</th>
+                  <th>Delay Risk</th>
                   <th>E-Way Bill Draft</th>
                   <th>Last Update</th>
                 </tr>
@@ -307,7 +386,7 @@ export default function Dashboard() {
               <tbody>
                 {shipments.length === 0 ? (
                   <tr>
-                    <td colSpan="7" style={{ textAlign: 'center', color: 'var(--color-text-secondary)', padding: '40px' }}>
+                    <td colSpan="8" style={{ textAlign: 'center', color: 'var(--color-text-secondary)', padding: '40px' }}>
                       No active shipments found.
                     </td>
                   </tr>
@@ -338,6 +417,16 @@ export default function Dashboard() {
                       <td>
                         <span className={`badge-pill ${getStatusClass(s.status)}`}>
                           {s.status}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`badge-pill ${
+                          (s.delay_risk_level || 'Low').toLowerCase() === 'critical' ? 'badge-pill-danger' :
+                          (s.delay_risk_level || 'Low').toLowerCase() === 'high' ? 'badge-pill-amber' :
+                          (s.delay_risk_level || 'Low').toLowerCase() === 'medium' ? 'badge-pill-info' :
+                          'badge-pill-success'
+                        }`}>
+                          {s.delay_risk_level || 'Low'} ({s.delay_risk_score || 0}%)
                         </span>
                       </td>
                       <td>
@@ -450,6 +539,68 @@ export default function Dashboard() {
                 </div>
               </div>
 
+              {/* Delay Risk Badge */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '12px 16px', borderRadius: '8px', fontSize: '13px' }}>
+                <span style={{ color: 'var(--color-text-secondary)', fontWeight: 600 }}>Delay Risk Assessment</span>
+                <span className={`badge-pill ${
+                  (selectedShipment.delay_risk_level || 'Low').toLowerCase() === 'critical' ? 'badge-pill-danger' :
+                  (selectedShipment.delay_risk_level || 'Low').toLowerCase() === 'high' ? 'badge-pill-amber' :
+                  (selectedShipment.delay_risk_level || 'Low').toLowerCase() === 'medium' ? 'badge-pill-info' :
+                  'badge-pill-success'
+                }`} style={{ fontWeight: 700 }}>
+                  {selectedShipment.delay_risk_level || 'Low'} ({selectedShipment.delay_risk_score || 0}%)
+                </span>
+              </div>
+
+              {/* AI Confidence & Extraction Panel */}
+              <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '16px' }} id="ai-confidence-panel">
+                <h4 style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)', marginBottom: '8px', fontWeight: 700 }}>AI Confidence & Extraction Panel</h4>
+                <div style={{ 
+                  background: selectedShipment.ai_confidence === 'HIGH' ? '#f0fdf4' : selectedShipment.ai_confidence === 'MEDIUM' ? '#fef3c7' : '#fef2f2',
+                  border: `1px solid ${selectedShipment.ai_confidence === 'HIGH' ? '#bbf7d0' : selectedShipment.ai_confidence === 'MEDIUM' ? '#fde68a' : '#fca5a5'}`,
+                  padding: '12px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong>Confidence Level:</strong>
+                    <span style={{ 
+                      fontWeight: 'bold', 
+                      color: selectedShipment.ai_confidence === 'HIGH' ? '#16a34a' : selectedShipment.ai_confidence === 'MEDIUM' ? '#d97706' : '#dc2626'
+                    }}>
+                      {selectedShipment.ai_confidence || 'LOW'}
+                    </span>
+                  </div>
+                  {selectedShipment.ai_metadata && (
+                    <>
+                      {selectedShipment.ai_metadata.extracted_fields && (
+                        <div>
+                          <strong>Extracted Details:</strong>
+                          <ul style={{ margin: '4px 0', paddingLeft: '20px', listStyleType: 'disc' }}>
+                            {Object.entries(selectedShipment.ai_metadata.extracted_fields).map(([k, v]) => (
+                              v !== null && <li key={k}><strong>{k.replace('_', ' ')}:</strong> {String(v)}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {selectedShipment.ai_metadata.missing_fields && selectedShipment.ai_metadata.missing_fields.length > 0 && (
+                        <div style={{ color: '#dc2626' }}>
+                          <strong>Missing Fields:</strong> {selectedShipment.ai_metadata.missing_fields.join(', ')}
+                        </div>
+                      )}
+                      {selectedShipment.ai_metadata.match_reason && (
+                        <div style={{ fontStyle: 'italic', background: 'rgba(255,255,255,0.6)', padding: '6px', borderRadius: '4px', marginTop: '4px' }}>
+                          <strong>Match Reason:</strong> {selectedShipment.ai_metadata.match_reason}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
               {/* Operator */}
               <div>
                 <h4 style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)', marginBottom: '8px', fontWeight: 700 }}>Operator (Sender)</h4>
@@ -532,6 +683,24 @@ export default function Dashboard() {
                 )}
               </div>
 
+              {/* Dispute Resolution */}
+              {selectedShipment.status === 'DELIVERED' && (
+                <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '16px' }} id="shipment-dispute-section">
+                  <h4 style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)', marginBottom: '8px', fontWeight: 700 }}>Dispute Resolution</h4>
+                  <button 
+                    onClick={() => handleDownloadDisputePack(selectedShipment.id)} 
+                    className="btn-refresh" 
+                    disabled={generatingDispute}
+                    style={{ fontSize: '13px', width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
+                    </svg>
+                    {generatingDispute ? 'Generating Dispute Pack...' : 'Download Verified Dispute Pack PDF'}
+                  </button>
+                </div>
+              )}
+
               {/* Trust Timeline */}
               <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '16px' }} id="shipment-timeline-section">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
@@ -539,6 +708,52 @@ export default function Dashboard() {
                   <button className="btn-refresh" onClick={() => fetchTimeline(selectedShipment.id)} style={{ padding: '4px 8px', fontSize: '10px' }}>
                     Refresh
                   </button>
+                </div>
+
+                {/* Visual Trip Stages Stepper */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid var(--color-border)', marginBottom: '16px' }}>
+                  {['BOOKED', 'CONFIRMED', 'LOADED', 'IN_TRANSIT', 'DELIVERED'].map((stage, idx) => {
+                    const currentStatus = selectedShipment.status;
+                    const stagesOrder = ['PENDING', 'CONFIRMED', 'LOADED', 'IN_TRANSIT', 'DELIVERED'];
+                    const activeIdx = stagesOrder.indexOf(currentStatus);
+                    const isCompleted = stagesOrder.indexOf(stage) <= activeIdx;
+                    
+                    return (
+                      <div key={stage} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', flex: 1, position: 'relative' }}>
+                        {/* Connector Line */}
+                        {idx < 4 && (
+                          <div style={{ 
+                            position: 'absolute', 
+                            top: '8px', 
+                            left: '50%', 
+                            right: '-50%', 
+                            height: '2px', 
+                            backgroundColor: stagesOrder.indexOf(stagesOrder[idx+1]) <= activeIdx ? 'var(--color-saffron)' : 'var(--color-border)',
+                            zIndex: 0
+                          }} />
+                        )}
+                        <div style={{ 
+                          width: '18px', 
+                          height: '18px', 
+                          borderRadius: '50%', 
+                          backgroundColor: isCompleted ? 'var(--color-saffron)' : '#ffffff', 
+                          border: `2px solid ${isCompleted ? 'var(--color-saffron)' : 'var(--color-border)'}`,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '9px',
+                          color: isCompleted ? '#ffffff' : 'var(--color-text-muted)',
+                          fontWeight: 'bold',
+                          zIndex: 1
+                        }}>
+                          {isCompleted ? '✓' : idx + 1}
+                        </div>
+                        <span style={{ fontSize: '9px', fontWeight: 600, color: isCompleted ? 'var(--color-text-primary)' : 'var(--color-text-muted)', textAlign: 'center' }}>
+                          {stage}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
                 
                 {timelineLoading ? (

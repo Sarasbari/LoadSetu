@@ -43,53 +43,49 @@ sequenceDiagram
 
 ## ✨ Key Features
 
-1. **Stateful Conversational Bookings**: Handled by Llama 3.3 on Groq to understand informal Hinglish, Hindi, and English (e.g. *"kal subah Ludhiana se flatbed 15 ton steel"*).
-2. **Autonomous Truck Matching**: Correlates cargo payload and origin locations against available vehicle registries using custom matching heuristics.
-3. **Automated E-Way Bill PDF Generation**: Reconstructs party details (Consignor, Consignee, HSN, weights, values) to compile a verification-ready PDF (complete with a `"DRAFT — NOT A PORTAL-ISSUED EWB"` watermark).
-4. **Resilient Self-Healing Mode**: The backend has built-in failover triggers that automatically switch to local in-memory DB and deterministic mock model rules if Supabase or Groq API connections drop.
-5. **Real-time Delay Checker**: Runs as an background worker that dynamically polls in-transit shipments and alerts operators if a truck goes off-route or exceeds estimated transit times.
-6. **Premium Web Dashboard**: A light-themed, modern operator workspace featuring full-height sidebars, live trip status widgets, conversational threads, and truck registry cards.
-
----
-
-## 📸 Screenshots
-
-### Web Panel Dashboard
-![LoadSetu Dashboard](docs/assets/dashboard.png)
-
-### Truck Registry
-![Truck Registry](docs/assets/trucks.png)
-
-### Conversational Threads
-![Conversations](docs/assets/conversations.png)
+1. **Stateful Conversational Bookings**: Handled by Llama 3.3 on Groq to understand informal Hinglish, Hindi, and English (e.g. *"kal subah Ludhiana se flatbed 15 ton steel"*). Includes a **one-off repair prompt retry** for JSON parsing errors.
+2. **Autonomous Truck Matching & Explainability**: Correlates cargo payload and origin locations against available vehicle registries using custom matching heuristics, with explicit matching reasons.
+3. **AI Confidence & Extraction Panel**: Real-time display of AI confidence level, extracted fields, missing items, and matching reasons inside the operations drawer.
+4. **Trust Timeline / Verifiable Trip Record**: Sequential, visual progress stepper and chronological audit trail of all trip events (Intake -> Matching -> EWB Draft -> Driver Assignment -> Loaded -> Transit -> Delivered/POD).
+5. **Delay Risk Score & Level**: Heuristically calculates a risk score (0-100%) and level (Low, Medium, High, Critical) based on missing driver updates, scheduled pickup delay, and travel distance.
+6. **E-Way Bill & Dispute Pack PDF Generation**: Compiles standard EWB drafts and complete dispute packets (with consignor/consignee, POD, timeline audit trail, and filtered chat logs) into verified ReportLab PDFs.
+7. **One-click Guided Demo Simulator**: Grid-based interactive stepper to click through the entire shipment lifecycle (Booking -> Confirmation -> Loading -> Transit -> Delay Alert -> POD submission).
+8. **Production Security Hardening**:
+   - **Signature Verification**: Validates Twilio `X-Twilio-Signature` to prevent spoofing in production.
+   - **Admin Authorization**: Enforces custom `ADMIN_TOKEN` and rejects default `secret_admin_token_2026` in production.
+   - **Fail-Loud Enforcement**: Suppresses mock DB/LLM fallbacks in production, raising `RuntimeError` on config/API failure.
+   - **CORS Restrictions**: Replaces wildcard access with specified `ALLOWED_CORS_ORIGINS` in production.
+   - **Webhook Idempotency**: Inspects Twilio `MessageSid` to block duplicate webhook processing.
+9. **Responsive Web Dashboard**: A light-themed, modern operator workspace with clean SVG navigation and responsive support for mobile, tablet, and desktop views.
 
 ---
 
 ## ⚙️ Environment Variables
 
 ### Backend Configuration (`backend/.env`)
-Create a file named `.env` in the `backend/` directory. If any credentials are left as default placeholders, the system automatically runs in **Mock/Demo mode**.
+Create a file named `.env` in the `backend/` directory.
 
-| Variable | Description | Default / Demo Placeholder |
-| :--- | :--- | :--- |
-| `TWILIO_ACCOUNT_SID` | Twilio Account SID | `AC00000000000000000000000000000000` |
-| `TWILIO_AUTH_TOKEN` | Twilio Auth Token | `00000000000000000000000000000000` |
-| `TWILIO_WHATSAPP_NUMBER` | Twilio registered WhatsApp number | `whatsapp:+14155238886` |
-| `GROQ_API_KEY` | Groq Developer API Key | `gsk_000000000000000000000000000000000000` |
-| `SUPABASE_URL` | Supabase Project REST Endpoint | `https://dummy.supabase.co` |
-| `SUPABASE_SERVICE_KEY` | Supabase Service Account Token | `dummy_service_key` |
-| `APP_ENV` | Running Environment | `development` |
-| `WEBHOOK_BASE_URL` | Public callback URL (ngrok) | `http://localhost:8000` |
-| `ADMIN_TOKEN` | Bearer Authorization key for frontend | `secret_admin_token_2026` |
-| `DELAY_CHECK_INTERVAL_HOURS`| Background late shipment checking rate | `3` |
+| Variable | Description | Production Requirement | Default / Demo Placeholder |
+| :--- | :--- | :--- | :--- |
+| `TWILIO_ACCOUNT_SID` | Twilio Account SID | Required | `AC00000000000000000000000000000000` |
+| `TWILIO_AUTH_TOKEN` | Twilio Auth Token | Required (enables signature checks) | `00000000000000000000000000000000` |
+| `TWILIO_WHATSAPP_NUMBER` | Twilio WhatsApp number | Required | `whatsapp:+14155238886` |
+| `GROQ_API_KEY` | Groq Developer API Key | Required (no mock LLM in prod) | `gsk_00000000000000000000000000000000` |
+| `SUPABASE_URL` | Supabase Project Rest URL | Required (no mock DB in prod) | `https://dummy.supabase.co` |
+| `SUPABASE_SERVICE_KEY` | Supabase Service Role Key | Required | `dummy_service_key` |
+| `APP_ENV` | Running Environment | Set to `production` | `development` |
+| `WEBHOOK_BASE_URL` | Registered public webhook URL | Required (Twilio signature check) | `http://localhost:8000` |
+| `ADMIN_TOKEN` | Bearer Auth token for operators | Required (rejects default) | `secret_admin_token_2026` |
+| `ALLOWED_CORS_ORIGINS` | CORS allowed domains | Required in production (comma-sep) | `http://localhost:5173` |
+| `DELAY_CHECK_INTERVAL_HOURS`| Background delay check poll rate | Optional | `3` |
 
 ### Frontend Configuration (`frontend/.env`)
 Create a file named `.env` in the `frontend/` directory.
 
 ```bash
-# Vite Environment Template
+# Vite Environment Configuration
 VITE_API_BASE_URL=http://localhost:8000
-VITE_ADMIN_TOKEN=secret_admin_token_2026
+VITE_ADMIN_TOKEN=your_secure_admin_token
 ```
 
 ---

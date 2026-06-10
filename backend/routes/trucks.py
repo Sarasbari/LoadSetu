@@ -1,30 +1,22 @@
-import os
 from fastapi import APIRouter, Header, HTTPException, status, Path
 from services import supabase_service
 from models.truck import TruckCreate, TruckAvailabilityUpdate
+from routes.shipments import verify_admin_token
 
 router = APIRouter(prefix="/trucks", tags=["trucks"])
-
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "secret_admin_token_2026")
-
-async def verify_admin_token(authorization: str):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or invalid Authorization header"
-        )
-    token = authorization.split(" ")[1]
-    if token != ADMIN_TOKEN:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid admin token"
-        )
 
 @router.get("")
 async def get_trucks(page: int = 1, limit: int = 20, authorization: str = Header(None)):
     """GET /trucks - Returns paginated list of all trucks (requires Admin token)."""
     await verify_admin_token(authorization)
     
+    if page < 1:
+        page = 1
+    if limit < 1:
+        limit = 20
+    elif limit > 100:
+        limit = 100
+        
     all_trucks = supabase_service.get_all_trucks()
     
     start_idx = (page - 1) * limit
@@ -37,6 +29,7 @@ async def get_trucks(page: int = 1, limit: int = 20, authorization: str = Header
         "page": page,
         "limit": limit
     }
+
 
 @router.post("")
 async def create_truck(truck_data: TruckCreate, authorization: str = Header(None)):

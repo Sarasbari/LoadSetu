@@ -17,6 +17,10 @@ IS_MOCK_TWILIO = (
     or TWILIO_AUTH_TOKEN == "00000000000000000000000000000000"
 )
 
+APP_ENV = os.getenv("APP_ENV", "development")
+if APP_ENV == "production" and IS_MOCK_TWILIO:
+    raise RuntimeError("Twilio ACCOUNT_SID and AUTH_TOKEN must be configured in production mode!")
+
 twilio_client = None
 if not IS_MOCK_TWILIO:
     try:
@@ -24,6 +28,8 @@ if not IS_MOCK_TWILIO:
         logger.info("Twilio client initialized successfully.")
     except Exception as e:
         logger.error(f"Failed to initialize Twilio client: {e}")
+        if APP_ENV == "production":
+            raise RuntimeError(f"Failed to initialize Twilio client in production mode: {e}")
         IS_MOCK_TWILIO = True
 
 def send_message(to_number: str, body: str, shipment_id: str = None, media_url: str = None) -> bool:
@@ -76,6 +82,8 @@ def send_message(to_number: str, body: str, shipment_id: str = None, media_url: 
         return True
     except Exception as e:
         logger.error(f"Failed to send Twilio message: {e}")
+        if APP_ENV == "production":
+            raise RuntimeError(f"Failed to send Twilio message in production: {e}")
         # Return True in mock fallback mode so application testing does not break
         try:
             safe_body = body.replace("₹", "Rs. ").replace("✅", "[OK]").replace("❌", "[ERROR]").replace("🚨", "[ALERT]").replace("🙏", "[NAMASTE]").replace("ℹ️", "[INFO]")

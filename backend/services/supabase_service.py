@@ -1,5 +1,6 @@
 import os
 import logging
+import datetime
 from supabase import create_client, Client
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,14 @@ IS_MOCK = (
     or SUPABASE_URL == "https://xxxxxxxxxxxx.supabase.co"
 )
 
+# Timezone helper for Asia/Kolkata (IST)
+IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
+# Require active keys in production environment
+APP_ENV = os.getenv("APP_ENV", "development")
+if APP_ENV == "production" and IS_MOCK:
+    raise RuntimeError("SUPABASE_URL and SUPABASE_SERVICE_KEY must be configured in production mode!")
+
 supabase_client: Client = None
 
 if not IS_MOCK:
@@ -22,6 +31,8 @@ if not IS_MOCK:
         logger.info("Supabase client initialized successfully.")
     except Exception as e:
         logger.error(f"Failed to initialize Supabase client: {e}")
+        if APP_ENV == "production":
+            raise RuntimeError(f"Failed to initialize Supabase client in production mode: {e}")
         IS_MOCK = True
 
 # Mock DB store for local testing without Supabase credentials
@@ -44,6 +55,8 @@ def is_mock_active() -> bool:
 
 def handle_error(func, *args, **kwargs):
     global IS_MOCK
+    if os.getenv("APP_ENV", "development") == "production":
+        raise RuntimeError(f"Supabase operation failed in production mode: {func.__name__}")
     logger.warning(f"Supabase operation failed. Auto-switching to MOCK DB mode.")
     IS_MOCK = True
     return func(*args, **kwargs)
@@ -59,6 +72,20 @@ def get_operator_by_phone(phone: str):
     except Exception as e:
         logger.error(f"Error getting operator: {e}")
         return handle_error(get_operator_by_phone, phone)
+
+def get_operator_by_id(operator_id: str):
+    if IS_MOCK:
+        for op in MOCK_OPERATORS.values():
+            if op["id"] == operator_id:
+                return op
+        return None
+    try:
+        res = supabase_client.table("operators").select("*").eq("id", operator_id).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        logger.error(f"Error getting operator by id: {e}")
+        return handle_error(get_operator_by_id, operator_id)
+
 
 def create_operator(phone: str, name: str = None, business_name: str = None, city: str = None, onboarding_status: str = "PENDING"):
     if IS_MOCK:
@@ -242,7 +269,8 @@ def create_truck(driver_name: str, driver_phone: str, truck_number: str, truck_t
 
 # --- Shipments Operations ---
 
-def create_shipment(operator_id: str, truck_id: str, origin: str, destination: str, cargo_type: str, weight_tons: float, scheduled_date: str, status: str = "PENDING"):
+def create_shipment(operator_id: str, truck_id: str, origin: str, destination: str, cargo_type: str, weight_tons: float, scheduled_date: str, status: str = "PENDING", ai_confidence: str = "LOW", ai_metadata: dict = None):
+    now_iso = datetime.datetime.now(IST).isoformat()
     if IS_MOCK:
         shipment_id = f"shp_{len(MOCK_SHIPMENTS) + 1}"
         shipment = {
@@ -257,12 +285,16 @@ def create_shipment(operator_id: str, truck_id: str, origin: str, destination: s
             "status": status,
             "ewb_draft_json": {},
             "ewb_pdf_url": None,
-            "confirmed_at": None if status == "PENDING" else "2026-06-08T12:00:00Z",
+            "confirmed_at": None if status == "PENDING" else now_iso,
             "loaded_at": None,
             "delivered_at": None,
             "delay_alerted": False,
-            "created_at": "2026-06-08T12:00:00Z",
-            "updated_at": "2026-06-08T12:00:00Z"
+            "created_at": now_iso,
+            "updated_at": now_iso,
+            "ai_confidence": ai_confidence,
+            "ai_metadata": ai_metadata or {},
+            "delay_risk_score": 0,
+            "delay_risk_level": "Low"
         }
         MOCK_SHIPMENTS[shipment_id] = shipment
         return shipment
@@ -275,16 +307,17 @@ def create_shipment(operator_id: str, truck_id: str, origin: str, destination: s
             "cargo_type": cargo_type,
             "weight_tons": weight_tons,
             "scheduled_date": scheduled_date,
-            "status": status
+            "status": status,
+            "ai_confidence": ai_confidence,
+            "ai_metadata": ai_metadata or {}
         }
         if status == "CONFIRMED":
-            import datetime
-            data["confirmed_at"] = datetime.datetime.now().isoformat()
+            data["confirmed_at"] = now_iso
         res = supabase_client.table("shipments").insert(data).execute()
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error creating shipment: {e}")
-        return handle_error(create_shipment, operator_id, truck_id, origin, destination, cargo_type, weight_tons, scheduled_date, status)
+        return handle_error(create_shipment, operator_id, truck_id, origin, destination, cargo_type, weight_tons, scheduled_date, status, ai_confidence, ai_metadata)
 
 def get_shipment_by_id(shipment_id: str):
     if IS_MOCK:
@@ -328,20 +361,23 @@ def update_shipment_status(
     pod_status: str = None,
     pod_note: str = None,
     pod_media_url: str = None,
-    pod_received_at: str = None
+    pod_received_at: str = None,
+    ai_confidence: str = None,
+    ai_metadata: dict = None,
+    delay_risk_score: int = None,
+    delay_risk_level: str = None
 ):
-    import datetime
-    now_iso = datetime.datetime.now().isoformat()
+    now_iso = datetime.datetime.now(IST).isoformat()
     if IS_MOCK:
         s = MOCK_SHIPMENTS.get(shipment_id)
         if s:
             s["status"] = status
             s["updated_at"] = now_iso
-            if status == "CONFIRMED":
+            if status == "CONFIRMED" and not s.get("confirmed_at"):
                 s["confirmed_at"] = now_iso
-            elif status == "LOADED":
+            elif status == "LOADED" and not s.get("loaded_at"):
                 s["loaded_at"] = now_iso
-            elif status == "DELIVERED":
+            elif status == "DELIVERED" and not s.get("delivered_at"):
                 s["delivered_at"] = now_iso
             if ewb_draft_json is not None:
                 s["ewb_draft_json"] = ewb_draft_json
@@ -355,6 +391,14 @@ def update_shipment_status(
                 s["pod_media_url"] = pod_media_url
             if pod_received_at is not None:
                 s["pod_received_at"] = pod_received_at
+            if ai_confidence is not None:
+                s["ai_confidence"] = ai_confidence
+            if ai_metadata is not None:
+                s["ai_metadata"] = ai_metadata
+            if delay_risk_score is not None:
+                s["delay_risk_score"] = delay_risk_score
+            if delay_risk_level is not None:
+                s["delay_risk_level"] = delay_risk_level
             return s
         return None
     try:
@@ -377,12 +421,20 @@ def update_shipment_status(
             data["pod_media_url"] = pod_media_url
         if pod_received_at is not None:
             data["pod_received_at"] = pod_received_at
+        if ai_confidence is not None:
+            data["ai_confidence"] = ai_confidence
+        if ai_metadata is not None:
+            data["ai_metadata"] = ai_metadata
+        if delay_risk_score is not None:
+            data["delay_risk_score"] = delay_risk_score
+        if delay_risk_level is not None:
+            data["delay_risk_level"] = delay_risk_level
             
         res = supabase_client.table("shipments").update(data).eq("id", shipment_id).execute()
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error updating shipment: {e}")
-        return handle_error(update_shipment_status, shipment_id, status, ewb_draft_json, ewb_pdf_url, pod_status, pod_note, pod_media_url, pod_received_at)
+        return handle_error(update_shipment_status, shipment_id, status, ewb_draft_json, ewb_pdf_url, pod_status, pod_note, pod_media_url, pod_received_at, ai_confidence, ai_metadata, delay_risk_score, delay_risk_level)
 
 
 def get_active_shipment_for_operator(operator_id: str):
@@ -428,7 +480,8 @@ def get_active_shipment_for_driver(driver_phone: str):
 
 # --- Messages Operations ---
 
-def log_message(phone_number: str, direction: str, body: str, shipment_id: str = None):
+def log_message(phone_number: str, direction: str, body: str, shipment_id: str = None, message_sid: str = None):
+    now_iso = datetime.datetime.now(IST).isoformat()
     if IS_MOCK:
         msg = {
             "id": f"msg_{len(MOCK_MESSAGES) + 1}",
@@ -436,7 +489,8 @@ def log_message(phone_number: str, direction: str, body: str, shipment_id: str =
             "direction": direction,
             "body": body,
             "shipment_id": shipment_id,
-            "timestamp": "2026-06-08T12:00:00Z"
+            "timestamp": now_iso,
+            "message_sid": message_sid
         }
         MOCK_MESSAGES.append(msg)
         return msg
@@ -445,13 +499,27 @@ def log_message(phone_number: str, direction: str, body: str, shipment_id: str =
             "phone_number": phone_number,
             "direction": direction,
             "body": body,
-            "shipment_id": shipment_id
+            "shipment_id": shipment_id,
+            "message_sid": message_sid
         }
         res = supabase_client.table("messages").insert(data).execute()
         return res.data[0] if res.data else None
     except Exception as e:
         logger.error(f"Error logging message: {e}")
-        return handle_error(log_message, phone_number, direction, body, shipment_id)
+        return handle_error(log_message, phone_number, direction, body, shipment_id, message_sid)
+
+def is_message_processed(message_sid: str) -> bool:
+    """Checks if a message with the given MessageSid has already been processed (idempotency)."""
+    if not message_sid:
+        return False
+    if IS_MOCK:
+        return any(m.get("message_sid") == message_sid for m in MOCK_MESSAGES)
+    try:
+        res = supabase_client.table("messages").select("id").eq("message_sid", message_sid).execute()
+        return len(res.data) > 0
+    except Exception as e:
+        logger.error(f"Error checking message idempotency: {e}")
+        return False
 
 def get_all_messages():
     if IS_MOCK:

@@ -22,6 +22,10 @@ if not IS_MOCK_GROQ:
 
 def chat_completion(system_prompt: str, user_message: str, max_tokens: int = 512, response_format: dict = None) -> str:
     """Calls Groq API with retries for rate limits and timeout. Falls back to mock if needed."""
+    APP_ENV = os.getenv("APP_ENV", "development")
+    if APP_ENV == "production" and IS_MOCK_GROQ:
+        raise RuntimeError("Groq API key must be configured in production mode!")
+
     if IS_MOCK_GROQ:
         logger.info("Groq API mock active. Simulating LLM response.")
         return get_mock_response(system_prompt, user_message)
@@ -51,9 +55,13 @@ def chat_completion(system_prompt: str, user_message: str, max_tokens: int = 512
                     time.sleep(2)
                     continue
             logger.error(f"Groq API Error: {e}")
+            if APP_ENV == "production":
+                raise RuntimeError(f"Groq API Error in production mode: {e}")
             # Fallback to mock on error so the app doesn't crash
             return get_mock_response(system_prompt, user_message)
             
+    if APP_ENV == "production":
+        raise RuntimeError("Groq API call failed after retries in production mode.")
     return get_mock_response(system_prompt, user_message)
 
 def get_mock_response(system_prompt: str, user_message: str) -> str:

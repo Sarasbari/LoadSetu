@@ -39,6 +39,13 @@ def run_seed():
     
     print(f"Found {len(trucks)} trucks in registry.")
 
+    import datetime
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    today = datetime.datetime.now(IST).date()
+    date_s1 = (today - datetime.timedelta(days=3)).isoformat()
+    date_s2 = (today - datetime.timedelta(days=1)).isoformat()
+    date_s3 = (today + datetime.timedelta(days=1)).isoformat()
+
     # 3. Seed Shipments
     # Shipment 1: DELIVERED from Nashik to Mumbai (Onions)
     truck_nashik = next((t for t in trucks if t["home_city"].lower() == "nashik"), trucks[0])
@@ -49,7 +56,7 @@ def run_seed():
         destination="Mumbai",
         cargo_type="Onions",
         weight_tons=8.0,
-        scheduled_date="2026-06-05",
+        scheduled_date=date_s1,
         status="DELIVERED"
     )
     supabase_service.update_shipment_status(
@@ -62,7 +69,7 @@ def run_seed():
             "destination": "Mumbai",
             "cargo_description": "Onions",
             "weight_tons": 8.0,
-            "scheduled_date": "2026-06-05",
+            "scheduled_date": date_s1,
             "truck_number": truck_nashik["truck_number"],
             "driver_name": truck_nashik["driver_name"],
             "approximate_value": 450000,
@@ -82,7 +89,7 @@ def run_seed():
         destination="Pune",
         cargo_type="Polyester Fabric",
         weight_tons=6.5,
-        scheduled_date="2026-06-08",
+        scheduled_date=date_s2,
         status="IN_TRANSIT"
     )
     supabase_service.update_shipment_status(
@@ -95,7 +102,7 @@ def run_seed():
             "destination": "Pune",
             "cargo_description": "Polyester Fabric",
             "weight_tons": 6.5,
-            "scheduled_date": "2026-06-08",
+            "scheduled_date": date_s2,
             "truck_number": truck_surat["truck_number"],
             "driver_name": truck_surat["driver_name"],
             "approximate_value": 1200000,
@@ -115,7 +122,7 @@ def run_seed():
         destination="Mumbai",
         cargo_type="Industrial Chemicals",
         weight_tons=12.0,
-        scheduled_date="2026-06-09",
+        scheduled_date=date_s3,
         status="CONFIRMED"
     )
     supabase_service.update_truck_availability(truck_surat2["id"], is_available=False, current_city="Surat")

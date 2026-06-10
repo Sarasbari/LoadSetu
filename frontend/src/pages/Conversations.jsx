@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../lib/api';
 
 export default function Conversations() {
@@ -8,7 +8,7 @@ export default function Conversations() {
   const [loadingList, setLoadingList] = useState(true);
   const [loadingThread, setLoadingThread] = useState(false);
 
-  const fetchList = async () => {
+  const fetchList = useCallback(async () => {
     try {
       const data = await api.get('/conversations');
       setConversations(data.conversations || []);
@@ -22,9 +22,9 @@ export default function Conversations() {
       console.error("Failed to load conversations:", error);
       setLoadingList(false);
     }
-  };
+  }, [selectedPhone]);
 
-  const fetchThread = async (phone) => {
+  const fetchThread = useCallback(async (phone) => {
     setLoadingThread(true);
     try {
       const data = await api.get(`/conversations/${phone}`);
@@ -34,21 +34,25 @@ export default function Conversations() {
       console.error(`Failed to load thread for ${phone}:`, error);
       setLoadingThread(false);
     }
-  };
-
-  useEffect(() => {
-    fetchList();
-    const listInterval = setInterval(fetchList, 15000);
-    return () => clearInterval(listInterval);
   }, []);
 
   useEffect(() => {
+    Promise.resolve().then(() => {
+      fetchList();
+    });
+    const listInterval = setInterval(fetchList, 15000);
+    return () => clearInterval(listInterval);
+  }, [fetchList]);
+
+  useEffect(() => {
     if (selectedPhone) {
-      fetchThread(selectedPhone);
+      Promise.resolve().then(() => {
+        fetchThread(selectedPhone);
+      });
       const threadInterval = setInterval(() => fetchThread(selectedPhone), 10000);
       return () => clearInterval(threadInterval);
     }
-  }, [selectedPhone]);
+  }, [selectedPhone, fetchThread]);
 
   const renderMessageBody = (text) => {
     const urlRegex = /(https?:\/\/[^\s]+)/g;

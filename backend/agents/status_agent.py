@@ -24,30 +24,48 @@ def parse_status(message: str) -> dict:
     
     response = groq_service.chat_completion(system_prompt, message, max_tokens=128)
     
+    def _clean_json_str(s: str) -> str:
+        clean = s.strip()
+        if clean.startswith("```json"):
+            clean = clean[7:]
+        elif clean.startswith("```"):
+            clean = clean[3:]
+        if clean.endswith("```"):
+            clean = clean[:-3]
+        return clean.strip()
+
+    parsed = {}
     try:
-        # Clean markdown wrappers if any
-        clean_response = response.strip()
-        if clean_response.startswith("```json"):
-            clean_response = clean_response[7:]
-        if clean_response.endswith("```"):
-            clean_response = clean_response[:-3]
-        clean_response = clean_response.strip()
-        
+        clean_response = _clean_json_str(response)
         parsed = json.loads(clean_response)
-        
-        # Verify keys
-        if "status" not in parsed or "note" not in parsed:
-            parsed = {"status": "UNKNOWN", "note": "Failed to parse required keys"}
-            
-        # Ensure status is valid
-        valid_statuses = ["LOADED", "IN_TRANSIT", "DELIVERED", "DELAYED", "UNKNOWN"]
-        if parsed["status"] not in valid_statuses:
-            parsed["status"] = "UNKNOWN"
-            
-        return parsed
     except Exception as e:
-        logger.error(f"Error parsing status update: {e}. Raw response: {response}")
-        return {
-            "status": "UNKNOWN",
-            "note": f"Error parsing: {message}"
-        }
+        logger.warning(f"Initial JSON parsing of status update failed: {e}. Retrying with repair prompt...")
+        repair_system_prompt = (
+            "You are a strict JSON repair assistant. The user will provide a string that was supposed to be a valid JSON "
+            "but failed to parse. Output ONLY a valid JSON object matching the schema below. "
+            "Do not include any explanation or extra text.\n\n"
+            "JSON Schema:\n"
+            "{\n"
+            "  \"status\": \"LOADED\" | \"IN_TRANSIT\" | \"DELIVERED\" | \"DELAYED\" | \"UNKNOWN\",\n"
+            "  \"note\": string\n"
+            "}"
+        )
+        repair_user_prompt = f"Invalid string: {response}\nError: {e}\nRepair and return valid JSON:"
+        try:
+            repair_response = groq_service.chat_completion(repair_system_prompt, repair_user_prompt, max_tokens=128)
+            clean_repair = _clean_json_str(repair_response)
+            parsed = json.loads(clean_repair)
+        except Exception as retry_e:
+            logger.error(f"Repair JSON parsing failed for status update: {retry_e}. Fallback to UNKNOWN.")
+            parsed = {}
+
+    # Verify keys
+    if "status" not in parsed or "note" not in parsed:
+        parsed = {"status": "UNKNOWN", "note": f"Failed to parse: {message}"}
+        
+    # Ensure status is valid
+    valid_statuses = ["LOADED", "IN_TRANSIT", "DELIVERED", "DELAYED", "UNKNOWN"]
+    if parsed.get("status") not in valid_statuses:
+        parsed["status"] = "UNKNOWN"
+        
+    return parsed

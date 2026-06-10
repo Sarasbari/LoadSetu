@@ -4,6 +4,7 @@ import datetime
 from fastapi import APIRouter, Header, HTTPException, status
 from services import supabase_service, twilio_service
 from routes.shipments import verify_admin_token
+from routes.webhook import handle_confirmation
 from agents import matching_agent
 from utils import conversation_state
 
@@ -82,13 +83,16 @@ async def simulate_booking(authorization: str = Header(None)):
         description=f"Message: {body}"
     )
     
+    # Get relative date for tomorrow in IST
+    tomorrow = (datetime.datetime.now(supabase_service.IST) + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    
     # Mock AI details extraction results
     details = {
         "origin": "Surat",
         "destination": "Mumbai",
         "cargo_type": "Textiles",
         "weight_tons": 8.0,
-        "scheduled_date": "2026-06-09",
+        "scheduled_date": tomorrow,
         "confidence": "HIGH"
     }
     
@@ -133,6 +137,89 @@ async def simulate_booking(authorization: str = Header(None)):
         "matched_trucks": matched_trucks,
         "choices_message": choices_msg
     }
+
+
+@router.post("/simulate-confirm")
+async def simulate_confirm(authorization: str = Header(None)):
+    """POST /demo/simulate-confirm - Simulates operator confirming option 1 (first matched truck)."""
+    await verify_admin_token(authorization)
+    
+    phone = "+919876543210"
+    state = conversation_state.get_state(phone)
+    matched_trucks = state.get("context_json", {}).get("matched_trucks", [])
+    
+    if not matched_trucks:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No matched trucks found in active state. Please simulate booking first."
+        )
+        
+    op = supabase_service.get_operator_by_phone(phone)
+    if not op:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Demo operator Rajesh Patel is not registered."
+        )
+        
+    # Process confirmation for Option 1
+    handle_confirmation(
+        from_whatsapp=f"whatsapp:{phone}",
+        clean_phone=phone,
+        body="1",
+        state=state,
+        operator=op
+    )
+    
+    # Find the newly confirmed shipment
+    shipments = supabase_service.get_shipments_with_details()
+    confirmed = [s for s in shipments if s["status"] == "CONFIRMED"]
+    shipment_id = confirmed[0]["id"] if confirmed else None
+    
+    return {
+        "message": "Confirmation simulation succeeded (confirmed option 1)",
+        "shipment_id": shipment_id
+    }
+
+
+@router.post("/simulate-transit")
+async def simulate_transit(authorization: str = Header(None)):
+    """POST /demo/simulate-transit - Simulates truck departing and entering transit."""
+    await verify_admin_token(authorization)
+    
+    shipments = supabase_service.get_shipments_with_details()
+    loaded_shipments = [s for s in shipments if s["status"] in ["CONFIRMED", "LOADED"]]
+    if not loaded_shipments:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No CONFIRMED or LOADED shipments found to simulate transit. Please confirm/load a booking first."
+        )
+        
+    target = loaded_shipments[0]
+    shipment_id = target["id"]
+    driver_phone = target["trucks"]["driver_phone"] if target.get("trucks") else None
+    
+    # Update status to IN_TRANSIT
+    supabase_service.update_shipment_status(shipment_id, "IN_TRANSIT")
+    
+    # Log timeline event
+    supabase_service.create_timeline_event(
+        shipment_id=shipment_id,
+        phone_number=driver_phone,
+        event_type="shipment_in_transit",
+        title="Shipment In Transit",
+        description="Driver departed from origin. Truck is now on the route."
+    )
+    
+    # Notify operator
+    operator_phone = target["operators"]["phone"] if target.get("operators") else None
+    if operator_phone:
+        twilio_service.send_message(
+            to_number=f"whatsapp:{operator_phone}",
+            body=f"ℹ️ TRIP STATUS UPDATE\n\nTrip ID: {shipment_id[:8].upper()}\nStatus: IN_TRANSIT (Truck nikal gaya hai)\nNote: Simulated transit status update.",
+            shipment_id=shipment_id
+        )
+        
+    return {"message": "Shipment status updated to IN_TRANSIT", "shipment_id": shipment_id}
 
 
 @router.post("/simulate-loaded")

@@ -1,29 +1,21 @@
-import os
 from fastapi import APIRouter, Header, HTTPException, status, Path
 from services import supabase_service
+from routes.shipments import verify_admin_token
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
-ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "secret_admin_token_2026")
-
-async def verify_admin_token(authorization: str):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or invalid Authorization header"
-        )
-    token = authorization.split(" ")[1]
-    if token != ADMIN_TOKEN:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid admin token"
-        )
-
 @router.get("")
-async def get_conversations(authorization: str = Header(None)):
+async def get_conversations(page: int = 1, limit: int = 20, authorization: str = Header(None)):
     """GET /conversations - Returns unique conversations grouped by phone number (requires Admin token)."""
     await verify_admin_token(authorization)
     
+    if page < 1:
+        page = 1
+    if limit < 1:
+        limit = 20
+    elif limit > 100:
+        limit = 100
+        
     all_messages = supabase_service.get_all_messages()
     
     # Group messages by phone number and find the latest message per thread
@@ -56,7 +48,18 @@ async def get_conversations(authorization: str = Header(None)):
             
     # Sort threads by latest message timestamp descending
     sorted_threads = sorted(threads.values(), key=lambda x: x["last_timestamp"], reverse=True)
-    return {"conversations": sorted_threads}
+    
+    start_idx = (page - 1) * limit
+    end_idx = start_idx + limit
+    paginated_threads = sorted_threads[start_idx:end_idx]
+    
+    return {
+        "conversations": paginated_threads,
+        "total": len(sorted_threads),
+        "page": page,
+        "limit": limit
+    }
+
 
 @router.get("/{phone_number}")
 async def get_conversation_thread(

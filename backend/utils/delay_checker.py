@@ -123,3 +123,103 @@ async def check_delayed_shipments():
                     
         except Exception as e:
             logger.error(f"Error processing delay check for shipment {shipment.get('id')}: {e}")
+
+def calculate_delay_risk(shipment: dict) -> dict:
+    """Calculates a delay risk score (0-100) and risk level for a shipment."""
+    status = shipment.get("status", "PENDING").upper()
+    
+    # 1. Delivered shipments have 0 risk
+    if status == "DELIVERED":
+        return {"score": 0, "level": "Low", "reasons": ["Trip successfully delivered"]}
+        
+    # 2. Delayed status or delay_alerted has critical risk
+    if status == "DELAYED" or shipment.get("delay_alerted", False):
+        return {"score": 95, "level": "Critical", "reasons": ["Active delay flagged: Pickup or status update overdue"]}
+
+    score = 10
+    reasons = []
+    
+    # Analyze Scheduled Date
+    scheduled_date_str = shipment.get("scheduled_date")
+    if scheduled_date_str:
+        try:
+            sched_date = datetime.datetime.strptime(scheduled_date_str, "%Y-%m-%d").date()
+            # Use Asia/Kolkata timezone offset (UTC+5.30)
+            IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+            today = datetime.datetime.now(IST).date()
+            
+            # If scheduled date is in the past
+            if today > sched_date:
+                days_overdue = (today - sched_date).days
+                score += min(40, days_overdue * 15)
+                reasons.append(f"Scheduled date is {days_overdue} day(s) in the past")
+            elif today == sched_date:
+                score += 15
+                reasons.append("Pickup scheduled for today")
+            else:
+                reasons.append("Scheduled date is in the future")
+        except Exception:
+            pass
+
+    # Analyze time since last update
+    updated_at_str = shipment.get("updated_at")
+    if updated_at_str:
+        try:
+            # Parse ISO timestamp (handle possible Z or offset)
+            if updated_at_str.endswith("Z"):
+                updated_at_str = updated_at_str[:-1]
+            if "+" in updated_at_str:
+                updated_at_str = updated_at_str.split("+")[0]
+            updated_at = datetime.datetime.fromisoformat(updated_at_str)
+            now = datetime.datetime.now()
+            hours_since_update = (now - updated_at).total_seconds() / 3600.0
+            
+            if status == "CONFIRMED" and hours_since_update > 6:
+                score += min(20, int((hours_since_update - 6) * 2))
+                reasons.append(f"No driver activity for {int(hours_since_update)} hours after confirmation")
+            elif status in ["LOADED", "IN_TRANSIT"] and hours_since_update > 12:
+                score += min(30, int((hours_since_update - 12) * 1.5))
+                reasons.append(f"No transit status update for {int(hours_since_update)} hours")
+        except Exception:
+            pass
+
+    # Analyze route distance if known
+    origin = shipment.get("origin", "").lower()
+    destination = shipment.get("destination", "").lower()
+    from agents.matching_agent import CORRIDORS
+    corridor_data = None
+    for (o, d), data in CORRIDORS.items():
+        if o in origin and d in destination:
+            corridor_data = data
+            break
+            
+    if corridor_data:
+        distance = corridor_data["distance_km"]
+        if distance > 300:
+            score += 15
+            reasons.append(f"Long-haul route ({distance} km) increases transit risk")
+        else:
+            reasons.append(f"Short-haul route ({distance} km)")
+    else:
+        score += 10
+        reasons.append("Unknown route corridor distance")
+
+    # Limit score to bounds
+    score = max(0, min(100, score))
+    
+    # Assign level
+    if score < 30:
+        level = "Low"
+    elif score < 60:
+        level = "Medium"
+    elif score < 85:
+        level = "High"
+    else:
+        level = "Critical"
+        
+    return {
+        "score": score,
+        "level": level,
+        "reasons": reasons if reasons else ["Normal operations"]
+    }
+

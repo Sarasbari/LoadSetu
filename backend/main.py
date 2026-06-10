@@ -46,10 +46,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Enable CORS for frontend development
+# Enable CORS based on environment
+app_env = os.getenv("APP_ENV", "development")
+if app_env == "production":
+    allowed_origins_str = os.getenv("ALLOWED_CORS_ORIGINS", "")
+    allowed_origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()]
+    if not allowed_origins:
+        logger.warning("CORS: ALLOWED_CORS_ORIGINS is empty in production. All cross-origin requests will be blocked!")
+else:
+    allowed_origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust for production as needed
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

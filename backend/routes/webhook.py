@@ -1,6 +1,7 @@
 import os
 import logging
 import re
+import datetime
 from fastapi import APIRouter, Form, Request, Response, HTTPException
 from twilio.request_validator import RequestValidator
 
@@ -11,6 +12,9 @@ from agents import intake_agent, matching_agent, status_agent, document_agent
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhook", tags=["webhook"])
+
+# Global in-memory set to store processed MessageSids for idempotency
+PROCESSED_MESSAGE_SIDS = set()
 
 # Initialize Twilio Request Validator
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
@@ -49,7 +53,22 @@ async def receive_webhook(
     """POST /webhook - Main Twilio incoming message handler"""
     logger.info(f"Received webhook: From={From}, MessageSid={MessageSid}, Body='{Body[:50]}', NumMedia={NumMedia}")
     
-    # 1. Twilio Signature Validation
+    # 1. Twilio Idempotency Check
+    if MessageSid:
+        if MessageSid in PROCESSED_MESSAGE_SIDS:
+            logger.info(f"Duplicate MessageSid (in-memory): {MessageSid}. Ignoring.")
+            return Response(content="<Response></Response>", media_type="application/xml")
+            
+        if not supabase_service.is_mock_active() and supabase_service.is_message_processed(MessageSid):
+            logger.info(f"Duplicate MessageSid (DB): {MessageSid}. Ignoring.")
+            PROCESSED_MESSAGE_SIDS.add(MessageSid)
+            return Response(content="<Response></Response>", media_type="application/xml")
+            
+        PROCESSED_MESSAGE_SIDS.add(MessageSid)
+        if len(PROCESSED_MESSAGE_SIDS) > 5000:
+            PROCESSED_MESSAGE_SIDS.clear()
+            
+    # 2. Twilio Signature Validation
     form_data = await request.form()
     params = dict(form_data)
     signature = request.headers.get("X-Twilio-Signature", "")
@@ -57,14 +76,18 @@ async def receive_webhook(
     if not validate_signature(request, params, signature):
         raise HTTPException(status_code=403, detail="Invalid Twilio signature")
         
-    # 2. Extract clean phone number (remove 'whatsapp:' prefix)
+    # 3. Extract and validate phone number format
     clean_phone = From.replace("whatsapp:", "").strip()
-    
-    # 3. Log inbound message to database
+    if not re.match(r'^\+?[1-9]\d{1,14}$', clean_phone):
+        logger.warning(f"Rejected request from invalid phone format: {clean_phone}")
+        return Response(content="<Response></Response>", media_type="application/xml")
+        
+    # 4. Log inbound message to database
     supabase_service.log_message(
         phone_number=clean_phone,
         direction="INBOUND",
-        body=Body
+        body=Body,
+        message_sid=MessageSid
     )
     
     # 4. Determine User Role (Operator, Driver, or New Operator)
@@ -150,6 +173,11 @@ def handle_onboarding_step(from_whatsapp: str, clean_phone: str, body: str, step
     """Handles the sequential WhatsApp onboarding steps for operators."""
     if step == "business_name":
         business_name = body.strip()
+        if len(business_name) < 2 or len(business_name) > 100:
+            reply = "⚠️ Business Name 2 se 100 characters ke beech hona chahiye. Kripya fir se likhein."
+            twilio_service.send_message(from_whatsapp, reply)
+            return
+            
         supabase_service.update_operator(clean_phone, business_name=business_name)
         state["context_json"]["onboarding_step"] = "gst_number"
         conversation_state.update_state(clean_phone, "ONBOARDING", booking_details=state["context_json"])
@@ -158,9 +186,15 @@ def handle_onboarding_step(from_whatsapp: str, clean_phone: str, body: str, step
         twilio_service.send_message(from_whatsapp, reply)
         
     elif step == "gst_number":
-        gst_num = body.strip()
+        gst_num = body.strip().upper()
         if gst_num.lower() != "skip":
+            gst_pattern = r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$'
+            if not re.match(gst_pattern, gst_num):
+                reply = "⚠️ Invalid GSTIN format. Kripya 15-digit ka valid GSTIN bhejein ya 'skip' likhein."
+                twilio_service.send_message(from_whatsapp, reply)
+                return
             supabase_service.update_operator(clean_phone, gst_number=gst_num)
+            
         state["context_json"]["onboarding_step"] = "city"
         conversation_state.update_state(clean_phone, "ONBOARDING", booking_details=state["context_json"])
         
@@ -169,6 +203,11 @@ def handle_onboarding_step(from_whatsapp: str, clean_phone: str, body: str, step
         
     elif step == "city":
         city = body.strip()
+        if not re.match(r'^[a-zA-Z\s\.\-]{2,50}$', city):
+            reply = "⚠️ Shahar ka naam invalid hai. Kripya sahi shahar ka naam (sirf letters) likhein."
+            twilio_service.send_message(from_whatsapp, reply)
+            return
+            
         supabase_service.update_operator(clean_phone, city=city, name="Operator", onboarding_status="COMPLETED")
         state["context_json"]["onboarding_step"] = "completed"
         # Reset state to OTHER for normal booking
@@ -192,7 +231,8 @@ def handle_onboarding_step(from_whatsapp: str, clean_phone: str, body: str, step
 
 
 
-# --- Handler Functionsdef handle_new_booking(from_whatsapp: str, clean_phone: str, body: str, history: list, state: dict):
+# --- Handler Functions
+def handle_new_booking(from_whatsapp: str, clean_phone: str, body: str, history: list, state: dict):
     """Handles the intake of a new booking request with details validation, merging, and clarifications."""
     # 1. Log timeline event: booking request received
     supabase_service.create_timeline_event(
@@ -221,6 +261,45 @@ def handle_onboarding_step(from_whatsapp: str, clean_phone: str, body: str, step
     confidence = new_details.get("confidence") or existing_details.get("confidence") or "LOW"
     merged_details["confidence"] = confidence
     
+    # Server-side validations on parsed details
+    origin = merged_details.get("origin")
+    destination = merged_details.get("destination")
+    cargo = merged_details.get("cargo_type")
+    weight = merged_details.get("weight_tons")
+    
+    if origin and not re.match(r'^[a-zA-Z\s\.\-]{2,50}$', origin):
+        question = "⚠️ Origin city invalid hai. Kripya sahi city ka naam likhein. Example: Surat"
+        twilio_service.send_message(from_whatsapp, question)
+        merged_details["origin"] = None
+        conversation_state.update_state(clean_phone, "NEW_BOOKING", booking_details=merged_details)
+        return
+        
+    if destination and not re.match(r'^[a-zA-Z\s\.\-]{2,50}$', destination):
+        question = "⚠️ Destination city invalid hai. Kripya sahi city ka naam likhein. Example: Mumbai"
+        twilio_service.send_message(from_whatsapp, question)
+        merged_details["destination"] = None
+        conversation_state.update_state(clean_phone, "NEW_BOOKING", booking_details=merged_details)
+        return
+        
+    if cargo and (len(cargo.strip()) < 2 or len(cargo.strip()) > 100):
+        question = "⚠️ Cargo name invalid. Kripya maal ka naam short mein likhein. Example: textiles"
+        twilio_service.send_message(from_whatsapp, question)
+        merged_details["cargo_type"] = None
+        conversation_state.update_state(clean_phone, "NEW_BOOKING", booking_details=merged_details)
+        return
+        
+    if weight is not None:
+        try:
+            wt = float(weight)
+            if wt <= 0.1 or wt > 100.0:
+                question = "⚠️ Cargo weight 0.1 ton aur 100 ton ke beech hona chahiye. Kripya sahi weight bhejein. Example: 8 ton"
+                twilio_service.send_message(from_whatsapp, question)
+                merged_details["weight_tons"] = None
+                conversation_state.update_state(clean_phone, "NEW_BOOKING", booking_details=merged_details)
+                return
+        except ValueError:
+            merged_details["weight_tons"] = None
+            
     # Log timeline event: AI extraction completed
     supabase_service.create_timeline_event(
         shipment_id=None,
@@ -360,7 +439,31 @@ def handle_confirmation(from_whatsapp: str, clean_phone: str, body: str, state: 
     destination = booking_details.get("destination")
     cargo = booking_details.get("cargo_type")
     weight = float(booking_details.get("weight_tons", selected_truck.get("capacity_tons") or 8.0))
-    scheduled_date = booking_details.get("scheduled_date") or "2026-06-09"
+    
+    # Dynamic date fallback
+    tomorrow = (datetime.datetime.now(supabase_service.IST) + datetime.timedelta(days=1)).strftime("%Y-%m-%d")
+    scheduled_date = booking_details.get("scheduled_date") or tomorrow
+    
+    # Calculate missing fields and match reasons
+    missing_fields = []
+    for f in ["origin", "destination", "cargo_type", "weight_tons", "scheduled_date"]:
+        if not booking_details.get(f):
+            missing_fields.append(f)
+            
+    match_reason = f"Truck {selected_truck['truck_number']} has {selected_truck['capacity_tons']}T capacity matching required {weight}T on route {origin}-{destination}."
+    
+    ai_metadata = {
+        "extracted_fields": {
+            "origin": booking_details.get("origin"),
+            "destination": booking_details.get("destination"),
+            "cargo_type": booking_details.get("cargo_type"),
+            "weight_tons": booking_details.get("weight_tons"),
+            "scheduled_date": booking_details.get("scheduled_date"),
+            "special_requirements": booking_details.get("special_requirements")
+        },
+        "missing_fields": missing_fields,
+        "match_reason": match_reason
+    }
     
     # Log timeline event: truck option selected
     supabase_service.create_timeline_event(
@@ -381,7 +484,9 @@ def handle_confirmation(from_whatsapp: str, clean_phone: str, body: str, state: 
         cargo_type=cargo,
         weight_tons=weight,
         scheduled_date=scheduled_date,
-        status="CONFIRMED"
+        status="CONFIRMED",
+        ai_confidence=booking_details.get("confidence", "LOW"),
+        ai_metadata=ai_metadata
     )
     
     if not shipment:

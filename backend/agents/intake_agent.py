@@ -44,8 +44,22 @@ def classify_intent(messages: list[str]) -> str:
             
     return "OTHER"
 
+def _clean_json_str(s: str) -> str:
+    clean = s.strip()
+    if clean.startswith("```json"):
+        clean = clean[7:]
+    elif clean.startswith("```"):
+        clean = clean[3:]
+    if clean.endswith("```"):
+        clean = clean[:-3]
+    return clean.strip()
+
 def extract_freight_details(context: list[str], current_message: str) -> dict:
     """Extracts structured freight details from a natural language message and its conversation history."""
+    import datetime
+    IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    current_date_ist = datetime.datetime.now(IST).date().isoformat()
+    
     system_prompt = (
         "You are a logistics assistant extracting freight booking details from informal Indian WhatsApp messages.\n"
         "Messages may be in Hindi, English, or Hinglish (Hindi written in Latin script).\n"
@@ -57,14 +71,14 @@ def extract_freight_details(context: list[str], current_message: str) -> dict:
         "  \"destination\": string or null (Name of destination city, e.g. \"Mumbai\", \"Pune\"),\n"
         "  \"cargo_type\": string or null (Type of goods, e.g. \"Onions\", \"Textiles\", \"Chemicals\", \"Steel\"),\n"
         "  \"weight_tons\": number or null (Weight in metric tons, parse \"8 ton\" as 8.0, \"5000 kg\" as 5.0, etc.),\n"
-        "  \"scheduled_date\": \"YYYY-MM-DD\" or null (Date of shipment. Parse \"kal\" relative to current date, \"aaj\"/\"today\" as current date, \"aaj 2026-06-08\" -> 2026-06-08),\n"
+        "  \"scheduled_date\": \"YYYY-MM-DD\" or null (Date of shipment. Parse \"kal\" relative to current date, \"aaj\"/\"today\" as current date),\n"
         "  \"special_requirements\": string or null (e.g., \"open body\", \"closed container\", \"no night driving\"),\n"
         "  \"confidence\": \"HIGH\" | \"MEDIUM\" | \"LOW\"\n"
         "}\n\n"
         "Rules:\n"
         "- Do not make up values. If origin, destination, cargo, weight, or date is missing, return null.\n"
         "- Resolve pronouns or references against conversation history (e.g., if history says \"pyaaz bhejna hai\" and current message says \"8 ton hai\", cargo_type is \"Onions\" and weight is 8.0).\n"
-        "- The current date is: 2026-06-08. Use this to calculate relative dates like \"kal\" (2026-06-09) or \"parso\" (2026-06-10)."
+        f"- The current date is: {current_date_ist}. Use this to calculate relative dates like \"kal\" or \"parso\" relative to {current_date_ist}."
     )
     
     user_prompt = ""
@@ -77,33 +91,44 @@ def extract_freight_details(context: list[str], current_message: str) -> dict:
     response = groq_service.chat_completion(system_prompt, user_prompt, max_tokens=256)
     
     # Parse JSON cleanly
+    extracted = {}
     try:
-        # Strip markdown tags if the model added them despite instructions
-        clean_response = response.strip()
-        if clean_response.startswith("```json"):
-            clean_response = clean_response[7:]
-        if clean_response.endswith("```"):
-            clean_response = clean_response[:-3]
-        clean_response = clean_response.strip()
-        
+        clean_response = _clean_json_str(response)
         extracted = json.loads(clean_response)
-        
-        # Ensure all keys exist
-        required_keys = ["origin", "destination", "cargo_type", "weight_tons", "scheduled_date", "special_requirements", "confidence"]
-        for key in required_keys:
-            if key not in extracted:
-                extracted[key] = None
-                
-        return extracted
     except Exception as e:
-        logger.error(f"Error parsing detail extraction response: {e}. Raw response: {response}")
-        # Fallback to empty details
-        return {
-            "origin": None,
-            "destination": None,
-            "cargo_type": None,
-            "weight_tons": None,
-            "scheduled_date": None,
-            "special_requirements": None,
-            "confidence": "LOW"
-        }
+        logger.warning(f"Initial JSON parsing failed: {e}. Retrying with repair prompt...")
+        repair_system_prompt = (
+            "You are a strict JSON repair assistant. The user will provide a string that was supposed to be a valid JSON "
+            "but failed to parse. Output ONLY a valid JSON object matching the schema below. "
+            "Do not include any explanation or extra text.\n\n"
+            "JSON Schema:\n"
+            "{\n"
+            "  \"origin\": string or null,\n"
+            "  \"destination\": string or null,\n"
+            "  \"cargo_type\": string or null,\n"
+            "  \"weight_tons\": number or null,\n"
+            "  \"scheduled_date\": \"YYYY-MM-DD\" or null,\n"
+            "  \"special_requirements\": string or null,\n"
+            "  \"confidence\": \"HIGH\" | \"MEDIUM\" | \"LOW\"\n"
+            "}"
+        )
+        repair_user_prompt = f"Invalid string: {response}\nError: {e}\nRepair and return valid JSON:"
+        try:
+            repair_response = groq_service.chat_completion(repair_system_prompt, repair_user_prompt, max_tokens=256)
+            clean_repair = _clean_json_str(repair_response)
+            extracted = json.loads(clean_repair)
+        except Exception as retry_e:
+            logger.error(f"Repair JSON parsing failed: {retry_e}. Fallback to empty details.")
+            extracted = {}
+        
+    # Ensure all keys exist
+    required_keys = ["origin", "destination", "cargo_type", "weight_tons", "scheduled_date", "special_requirements", "confidence"]
+    for key in required_keys:
+        if key not in extracted:
+            extracted[key] = None
+            
+    # Set default confidence if missing
+    if not extracted.get("confidence"):
+        extracted["confidence"] = "LOW"
+            
+    return extracted

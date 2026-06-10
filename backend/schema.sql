@@ -83,21 +83,30 @@ ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies
 -- NOTE: In Supabase, the backend using the service_role key will bypass RLS.
--- These policies are for client-side / public dashboard integrations if needed.
--- Allow operators to select their own data
+-- In production, client-side requests must be restricted to their own phone number.
+-- Allow operators to access only their own profile
 DROP POLICY IF EXISTS "operators_own_data" ON operators;
 CREATE POLICY "operators_own_data" ON operators
-  FOR ALL USING (true); -- For MVP/demo we allow read/write or restrict if we set up claims.
-  -- To keep it simple and effective for hackathon dashboard without complex auth setups:
-  -- We'll allow authenticated admin dashboard read/writes, and handle operator lookup securely in backend.
+  FOR ALL TO authenticated
+  USING (phone = (auth.jwt()->>'phone_number'))
+  WITH CHECK (phone = (auth.jwt()->>'phone_number'));
 
+-- Allow operators to access only their own shipments
 DROP POLICY IF EXISTS "shipments_by_operator" ON shipments;
 CREATE POLICY "shipments_by_operator" ON shipments
-  FOR ALL USING (true);
+  FOR ALL TO authenticated
+  USING (
+    operator_id IN (
+      SELECT id FROM operators
+      WHERE phone = (auth.jwt()->>'phone_number')
+    )
+  );
 
+-- Allow operators and drivers to access only their own messages
 DROP POLICY IF EXISTS "messages_own" ON messages;
 CREATE POLICY "messages_own" ON messages
-  FOR ALL USING (true);
+  FOR ALL TO authenticated
+  USING (phone_number = (auth.jwt()->>'phone_number'));
 
 -- Seed Truck Registry (Ticket 0.3)
 INSERT INTO trucks (driver_name, driver_phone, truck_number, truck_type, capacity_tons, home_city, current_city, is_available, notes)
@@ -137,4 +146,13 @@ ALTER TABLE shipments ADD COLUMN IF NOT EXISTS pod_media_url TEXT;
 ALTER TABLE shipments ADD COLUMN IF NOT EXISTS pod_received_at TIMESTAMPTZ;
 
 ALTER TABLE operators ADD COLUMN IF NOT EXISTS onboarding_status TEXT DEFAULT 'PENDING';
+
+-- Alter Tables for hackathon features (AI Confidence, Delay Risk Score, Twilio Idempotency)
+ALTER TABLE shipments ADD COLUMN IF NOT EXISTS ai_confidence TEXT DEFAULT 'LOW';
+ALTER TABLE shipments ADD COLUMN IF NOT EXISTS ai_metadata JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE shipments ADD COLUMN IF NOT EXISTS delay_risk_score INTEGER DEFAULT 0;
+ALTER TABLE shipments ADD COLUMN IF NOT EXISTS delay_risk_level TEXT DEFAULT 'Low';
+
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS message_sid TEXT UNIQUE;
+
 
