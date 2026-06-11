@@ -23,6 +23,10 @@ async def seed_demo_data(authorization: str = Header(None)):
     supabase_service.MOCK_MESSAGES.clear()
     supabase_service.MOCK_CONVERSATIONS.clear()
     supabase_service.MOCK_SHIPMENT_EVENTS.clear()
+    if hasattr(supabase_service, "MOCK_NOTIFICATION_ATTEMPTS"):
+        supabase_service.MOCK_NOTIFICATION_ATTEMPTS.clear()
+    if hasattr(supabase_service, "MOCK_REVIEW_ITEMS"):
+        supabase_service.MOCK_REVIEW_ITEMS.clear()
     
     # Reset home city and availability for mock trucks
     for t in supabase_service.MOCK_TRUCKS:
@@ -38,13 +42,27 @@ async def seed_demo_data(authorization: str = Header(None)):
         onboarding_status="COMPLETED"
     )
     
+    # Seed a mock low-confidence review item for demo testing
+    supabase_service.create_review_item(
+        phone_number="+919876543219",
+        status="OPEN",
+        extracted_details={
+            "origin": "Surat",
+            "destination": "Ahmedabad",
+            "cargo_type": "Iron Rods",
+            "weight_tons": None
+        },
+        missing_fields=["weight_tons", "scheduled_date"],
+        latest_message="Mujhe Surat se Ahmedabad iron rods bhejna hai, kal ya parso"
+    )
+    
     # Log timeline event
     supabase_service.create_timeline_event(
         shipment_id=None,
         phone_number=None,
         event_type="operator_onboarded",
         title="Demo Control Room Seeded",
-        description="Initial demo operators and truck availability seeded."
+        description="Initial demo operators, truck availability, and manual review items seeded."
     )
     
     return {"message": "Demo data seeded successfully"}

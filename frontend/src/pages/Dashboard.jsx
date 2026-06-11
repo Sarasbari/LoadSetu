@@ -17,6 +17,17 @@ export default function Dashboard() {
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState(null);
 
+  // Review Queue states
+  const [reviewItems, setReviewItems] = useState([]);
+
+  // Notification logs states
+  const [notifications, setNotifications] = useState([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsError, setNotificationsError] = useState(null);
+
+  // Collapsible Debug JSON state
+  const [showDebugJson, setShowDebugJson] = useState(false);
+
   // Simulation states
   const [simulating, setSimulating] = useState(false);
   const [simulationStatus, setSimulationStatus] = useState('');
@@ -53,20 +64,19 @@ export default function Dashboard() {
       const delayed = list.filter(s => s.status === 'DELAYED' || s.delay_alerted === true).length;
 
       setStats({ total, inTransit, deliveredToday, delayed });
-      setLoading(false);
     } catch (error) {
       console.error("Failed to load shipments:", error);
-      setLoading(false);
     }
   }, [selectedShipment]);
 
-  useEffect(() => {
-    Promise.resolve().then(() => {
-      fetchData();
-    });
-    const interval = setInterval(fetchData, 10000); // Poll every 10 seconds for real-time sandbox feel
-    return () => clearInterval(interval);
-  }, [fetchData]);
+  const fetchReviewItems = useCallback(async () => {
+    try {
+      const res = await api.get('/review-items');
+      setReviewItems(res.review_items || []);
+    } catch (err) {
+      console.error("Failed to fetch review items:", err);
+    }
+  }, []);
 
   const fetchTimeline = useCallback(async (shipmentId) => {
     setTimelineLoading(true);
@@ -82,10 +92,100 @@ export default function Dashboard() {
     }
   }, []);
 
+  const fetchNotifications = useCallback(async (shipmentId) => {
+    setNotificationsLoading(true);
+    setNotificationsError(null);
+    try {
+      const data = await api.get(`/shipments/${shipmentId}/notifications`);
+      setNotifications(data.notifications || []);
+    } catch (error) {
+      console.error("Failed to load notifications:", error);
+      setNotificationsError("Failed to load notifications.");
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, []);
+
   const handleShipmentClick = (shipment) => {
     setSelectedShipment(shipment);
     setTimeline([]);
+    setNotifications([]);
     fetchTimeline(shipment.id);
+    fetchNotifications(shipment.id);
+    
+    // Update URL query param
+    const url = new URL(window.location.href);
+    url.searchParams.set('shipmentId', shipment.id);
+    window.history.pushState({}, '', url.pathname + url.search);
+  };
+
+  const handleCloseDrawer = () => {
+    setSelectedShipment(null);
+    // Remove query param
+    const url = new URL(window.location.href);
+    url.searchParams.delete('shipmentId');
+    window.history.pushState({}, '', url.pathname + url.search);
+  };
+
+  const handleResolveReview = async (itemId) => {
+    try {
+      await api.post(`/review-items/${itemId}/resolve`);
+      alert("Review item resolved successfully!");
+      fetchReviewItems();
+      fetchData();
+    } catch (err) {
+      alert("Failed to resolve: " + err.message);
+    }
+  };
+
+  const handleDismissReview = async (itemId) => {
+    try {
+      await api.post(`/review-items/${itemId}/dismiss`);
+      alert("Review item dismissed successfully!");
+      fetchReviewItems();
+      fetchData();
+    } catch (err) {
+      alert("Failed to dismiss: " + err.message);
+    }
+  };
+
+  const handleCancelShipment = async (shipmentId) => {
+    if (!window.confirm("Are you sure you want to cancel this shipment? This will notify both the operator and the driver.")) {
+      return;
+    }
+    try {
+      await api.post(`/shipments/${shipmentId}/cancel`);
+      alert("Shipment cancelled successfully.");
+      await fetchData();
+      fetchTimeline(shipmentId);
+      fetchNotifications(shipmentId);
+    } catch (err) {
+      alert("Failed to cancel shipment: " + err.message);
+    }
+  };
+
+  const handleReassignShipment = async (shipmentId) => {
+    if (!window.confirm("Are you sure you want to reassign this shipment to another truck?")) {
+      return;
+    }
+    try {
+      const res = await api.post(`/shipments/${shipmentId}/reassign`);
+      alert(`Reassigned successfully to ${res.truck?.truck_number || 'new truck'}. Waiting for driver acceptance.`);
+      await fetchData();
+      fetchTimeline(shipmentId);
+      fetchNotifications(shipmentId);
+    } catch (err) {
+      alert("Failed to reassign: " + err.message);
+    }
+  };
+
+  const handleManualRefresh = async () => {
+    setLoading(true);
+    await Promise.all([fetchData(), fetchReviewItems()]);
+    if (selectedShipment) {
+      await Promise.all([fetchTimeline(selectedShipment.id), fetchNotifications(selectedShipment.id)]);
+    }
+    setLoading(false);
   };
 
   const handleDownloadDisputePack = async (shipmentId) => {
@@ -112,12 +212,14 @@ export default function Dashboard() {
       const res = await api.post(endpoint);
       setSimulationStatus(`Success: ${res.message || 'Operation succeeded'}`);
       await fetchData(); // Refresh table
+      await fetchReviewItems(); // Refresh review items
       
-      // If details drawer is open, refresh timeline
+      // If details drawer is open, refresh timeline and notifications
       if (selectedShipment) {
         // Use timeout to allow database update processing
         setTimeout(() => {
           fetchTimeline(selectedShipment.id);
+          fetchNotifications(selectedShipment.id);
         }, 500);
       }
       
@@ -130,6 +232,60 @@ export default function Dashboard() {
     }
   };
 
+  // Initial deep link checking and onboarding
+  useEffect(() => {
+    const initialize = async () => {
+      try {
+        const shipmentsData = await api.get('/shipments', { page: 1, limit: 100 });
+        const list = shipmentsData.shipments || [];
+        setShipments(list);
+
+        // Compute Stats
+        const total = list.length;
+        const inTransit = list.filter(s => s.status === 'IN_TRANSIT' || s.status === 'LOADED').length;
+        const todayStr = new Date().toISOString().split('T')[0];
+        const deliveredToday = list.filter(s => {
+          if (s.status !== 'DELIVERED') return false;
+          const deliveredDate = s.delivered_at ? s.delivered_at.split('T')[0] : '';
+          return deliveredDate === todayStr || s.scheduled_date === todayStr;
+        }).length;
+        const delayed = list.filter(s => s.status === 'DELAYED' || s.delay_alerted === true).length;
+        setStats({ total, inTransit, deliveredToday, delayed });
+
+        const reviewData = await api.get('/review-items');
+        setReviewItems(reviewData.review_items || []);
+
+        // Deep linking
+        const params = new URLSearchParams(window.location.search);
+        const queryShipmentId = params.get('shipmentId');
+        if (queryShipmentId) {
+          const found = list.find(s => s.id === queryShipmentId);
+          if (found) {
+            setSelectedShipment(found);
+            fetchTimeline(found.id);
+            fetchNotifications(found.id);
+          }
+        }
+      } catch (err) {
+        console.error("Initialization failed:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    initialize();
+  }, [fetchTimeline, fetchNotifications]);
+
+  // Polling hook (pausing full board refresh while drawer is active)
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!selectedShipment) {
+        fetchData();
+        fetchReviewItems();
+      }
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [fetchData, fetchReviewItems, selectedShipment]);
+
   const formatTime = (isoString) => {
     if (!isoString) return 'N/A';
     const date = new Date(isoString);
@@ -137,12 +293,17 @@ export default function Dashboard() {
   };
 
   const getStatusClass = (status) => {
+    if (!status) return 'badge-pill-pending';
     switch (status.toUpperCase()) {
       case 'DELIVERED': return 'badge-pill-success';
       case 'CONFIRMED': return 'badge-pill-info';
       case 'LOADED':
-      case 'IN_TRANSIT': return 'badge-pill-amber';
-      case 'DELAYED': return 'badge-pill-danger';
+      case 'IN_TRANSIT':
+      case 'DRIVER_PENDING_ACCEPTANCE': return 'badge-pill-amber';
+      case 'DELAYED':
+      case 'DRIVER_NOTIFY_FAILED':
+      case 'DOCUMENT_FAILED':
+      case 'CANCELLED': return 'badge-pill-danger';
       default: return 'badge-pill-pending';
     }
   };
@@ -358,11 +519,102 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Manual Review Queue */}
+        {reviewItems.length > 0 && (
+          <div className="table-panel" style={{ marginBottom: '24px', border: '1px solid #fee2e2' }}>
+            <div className="table-panel-header" style={{ background: '#fef2f2', borderBottom: '1px solid #fca5a5' }}>
+              <h3 className="table-panel-title" style={{ color: '#991b1b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <line x1="12" y1="9" x2="12" y2="13" />
+                  <line x1="12" y1="17" x2="12.01" y2="17" />
+                </svg>
+                Manual Review Queue ({reviewItems.length} items require attention)
+              </h3>
+            </div>
+            <div className="table-wrapper">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th>Phone</th>
+                    <th>Extracted Details</th>
+                    <th>Missing Fields</th>
+                    <th>Latest Message</th>
+                    <th style={{ textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reviewItems.map((item) => (
+                    <tr key={item.id} style={{ background: '#fffbeb' }}>
+                      <td>{new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
+                      <td style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{item.phone_number}</td>
+                      <td>
+                        {item.extracted_details && Object.keys(item.extracted_details).length > 0 ? (
+                          <div style={{ fontSize: '12px' }}>
+                            {Object.entries(item.extracted_details).map(([k, v]) => (
+                              v !== null && <div key={k}><strong>{k}:</strong> {String(v)}</div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span style={{ color: 'var(--color-text-muted)', fontStyle: 'italic' }}>None</span>
+                        )}
+                      </td>
+                      <td>
+                        {item.missing_fields && item.missing_fields.length > 0 ? (
+                          <div style={{ color: '#dc2626', fontSize: '12px' }}>
+                            {item.missing_fields.join(', ')}
+                          </div>
+                        ) : (
+                          <span style={{ color: 'var(--badge-success-text)' }}>None</span>
+                        )}
+                      </td>
+                      <td style={{ fontSize: '12px', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.latest_message}>
+                        "{item.latest_message}"
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <div style={{ display: 'inline-flex', gap: '8px' }}>
+                          <button 
+                            className="btn-refresh" 
+                            onClick={() => handleResolveReview(item.id)}
+                            style={{ 
+                              background: 'var(--badge-success-bg)', 
+                              color: 'var(--badge-success-text)', 
+                              borderColor: '#bbf7d0',
+                              padding: '4px 8px',
+                              fontSize: '11px'
+                            }}
+                          >
+                            Resolve
+                          </button>
+                          <button 
+                            className="btn-refresh" 
+                            onClick={() => handleDismissReview(item.id)}
+                            style={{ 
+                              background: 'var(--badge-danger-bg)', 
+                              color: 'var(--badge-danger-text)', 
+                              borderColor: '#fca5a5',
+                              padding: '4px 8px',
+                              fontSize: '11px'
+                            }}
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         {/* Live Shipments Board */}
         <div className="table-panel">
           <div className="table-panel-header">
             <h3 className="table-panel-title">Live Shipments Board</h3>
-            <button className="btn-refresh" onClick={fetchData}>
+            <button className="btn-refresh" onClick={handleManualRefresh}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
               </svg>
@@ -472,7 +724,7 @@ export default function Dashboard() {
             justifyContent: 'flex-end',
             transition: 'opacity 0.3s ease'
           }} 
-          onClick={() => setSelectedShipment(null)}
+          onClick={handleCloseDrawer}
           id="shipment-detail-drawer"
         >
           <div 
@@ -498,14 +750,55 @@ export default function Dashboard() {
             }}>
               <div>
                 <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Shipment Details</span>
-                <h3 className="page-title" style={{ marginTop: '4px' }}>SHP_{selectedShipment.id.substring(0, 4).toUpperCase()}</h3>
+                <h3 className="page-title" style={{ marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  SHP_{selectedShipment.id.substring(0, 4).toUpperCase()}
+                  <button 
+                    onClick={() => {
+                      navigator.clipboard.writeText(selectedShipment.id);
+                      alert("Copied Shipment ID to clipboard!");
+                    }}
+                    style={{ 
+                      border: 'none', 
+                      cursor: 'pointer', 
+                      fontSize: '11px', 
+                      color: 'var(--color-blue-link)',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      background: '#eff6ff',
+                      fontWeight: 600
+                    }}
+                    title="Copy Full ID"
+                  >
+                    Copy ID
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const link = `${window.location.origin}${window.location.pathname}?shipmentId=${selectedShipment.id}`;
+                      navigator.clipboard.writeText(link);
+                      alert("Copied Deep Link to clipboard!");
+                    }}
+                    style={{ 
+                      border: 'none', 
+                      cursor: 'pointer', 
+                      fontSize: '11px', 
+                      color: 'var(--color-saffron)',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      background: '#fff7ed',
+                      fontWeight: 600
+                    }}
+                    title="Copy Deep Link"
+                  >
+                    Copy Link
+                  </button>
+                </h3>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <span className={`badge-pill ${getStatusClass(selectedShipment.status)}`}>
                   {selectedShipment.status}
                 </span>
                 <button 
-                  onClick={() => setSelectedShipment(null)} 
+                  onClick={handleCloseDrawer} 
                   style={{
                     background: 'none',
                     border: 'none',
@@ -817,6 +1110,124 @@ export default function Dashboard() {
                       );
                     })}
                   </div>
+                )}
+              </div>
+
+              {/* Dispatcher Actions Panel */}
+              {selectedShipment.status !== 'CANCELLED' && selectedShipment.status !== 'DELIVERED' && (
+                <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '16px' }} id="dispatcher-actions-panel">
+                  <h4 style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)', marginBottom: '12px', fontWeight: 700 }}>
+                    Dispatcher Actions
+                  </h4>
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    <button
+                      onClick={() => handleReassignShipment(selectedShipment.id)}
+                      className="btn-refresh"
+                      style={{ 
+                        flex: 1, 
+                        justifyContent: 'center', 
+                        background: '#fff7ed', 
+                        color: '#c2410c', 
+                        borderColor: '#ffedd5',
+                        fontWeight: 700 
+                      }}
+                    >
+                      🔄 Reassign Truck
+                    </button>
+                    <button
+                      onClick={() => handleCancelShipment(selectedShipment.id)}
+                      className="btn-refresh"
+                      style={{ 
+                        flex: 1, 
+                        justifyContent: 'center', 
+                        background: '#fef2f2', 
+                        color: '#dc2626', 
+                        borderColor: '#fee2e2',
+                        fontWeight: 700 
+                      }}
+                    >
+                      ❌ Cancel Shipment
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Notification Attempts / WhatsApp Logs */}
+              <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '16px' }} id="notification-logs-section">
+                <h4 style={{ fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-secondary)', marginBottom: '8px', fontWeight: 700 }}>
+                  WhatsApp Notification Logs
+                </h4>
+                {notificationsLoading ? (
+                  <div style={{ color: 'var(--color-text-secondary)', fontSize: '13px' }}>Loading notification logs...</div>
+                ) : notificationsError ? (
+                  <div style={{ color: 'var(--badge-danger-text)', fontSize: '13px' }}>{notificationsError}</div>
+                ) : notifications.length === 0 ? (
+                  <div style={{ color: 'var(--color-text-muted)', fontSize: '13px' }}>No notification logs.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    {notifications.map((attempt, index) => {
+                      const isFailed = attempt.status === 'FAILED';
+                      return (
+                        <div 
+                          key={attempt.id || index} 
+                          style={{ 
+                            background: isFailed ? '#fef2f2' : '#f8fafc',
+                            border: `1px solid ${isFailed ? '#fca5a5' : 'var(--color-border)'}`,
+                            padding: '10px',
+                            borderRadius: '6px',
+                            fontSize: '12px'
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                            <span style={{ fontWeight: 700, fontFamily: 'var(--font-mono)' }}>{attempt.to_phone}</span>
+                            <span className={`badge-pill ${isFailed ? 'badge-pill-danger' : 'badge-pill-success'}`} style={{ fontSize: '9px', padding: '2px 6px' }}>
+                              {attempt.status}
+                            </span>
+                          </div>
+                          <div style={{ color: 'var(--color-text-secondary)', marginBottom: '4px', fontStyle: 'italic' }}>
+                            "{attempt.message_body}"
+                          </div>
+                          {attempt.error_message && (
+                            <div style={{ color: '#b91c1c', fontWeight: 600, fontSize: '11px', marginTop: '2px' }}>
+                              Error: {attempt.error_message}
+                            </div>
+                          )}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--color-text-muted)', fontSize: '10px', marginTop: '4px' }}>
+                            <span>Retries: {attempt.retry_count || 0}</span>
+                            <span>{new Date(attempt.created_at || attempt.sent_at).toLocaleString()}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Debug JSON Panel */}
+              <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '16px' }} id="debug-json-section">
+                <button 
+                  className="btn-refresh" 
+                  onClick={() => setShowDebugJson(!showDebugJson)}
+                  style={{ width: '100%', justifyContent: 'space-between', fontSize: '11px' }}
+                >
+                  <span>{showDebugJson ? 'Hide Debug JSON' : 'Show Debug JSON'}</span>
+                  <span style={{ fontSize: '9px', fontFamily: 'var(--font-mono)' }}>{showDebugJson ? '▲' : '▼'}</span>
+                </button>
+                {showDebugJson && (
+                  <pre style={{ 
+                    marginTop: '8px', 
+                    padding: '12px', 
+                    background: '#0f172a', 
+                    color: '#38bdf8', 
+                    borderRadius: '6px', 
+                    fontFamily: 'var(--font-mono)', 
+                    fontSize: '10px', 
+                    overflowX: 'auto',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-all'
+                  }}>
+                    {JSON.stringify(selectedShipment, null, 2)}
+                  </pre>
                 )}
               </div>
             </div>

@@ -162,13 +162,58 @@ python backend/scratch/mock_webhook_client.py
 
 ## 📡 API Routes Reference
 
-### Webhook API
-- `POST /webhook`: Reconstructs Twilio form data, logs message direction, classifies user roles, updates states, and triggers the AI intent engine.
+All dashboard endpoints require authorization via `Authorization: Bearer <ADMIN_TOKEN>`.
 
-### Admin Dashboard APIs (Authorized via Bearer token)
-- `GET /api/trucks`: Lists all registered vehicles, drivers, capacities, and active coordinates.
-- `GET /api/shipments`: Fetches shipments joined with operator details and PDF download links.
-- `GET /api/conversations`: Extracts messages grouped by active phone numbers for live chat logs.
+### Webhook API
+- `POST /webhook`: Webhook endpoint for Twilio incoming messages. Directs messages to conversational engine.
+
+### Admin Dashboard APIs
+- `GET /trucks`: Lists all trucks, drivers, home/current cities, and availability status.
+- `GET /shipments`: Lists all shipments with joined operator and truck details.
+- `GET /shipments/{id}/timeline`: Retrieves the chronological trust timeline / audit trail for a shipment.
+- `GET /shipments/{id}/notifications`: Retrieves all WhatsApp notification attempts (including failed and retried logs) for a shipment.
+- `POST /shipments/{id}/dispute-pack`: Generates a ReportLab PDF containing a verified dispute pack with audit logs and messages.
+- `POST /shipments/{id}/cancel`: Cancels the shipment, releases the assigned truck, and notifies operator and driver.
+- `POST /shipments/{id}/reassign`: Reassigns the shipment to another nearby available truck and prompts the new driver for acceptance.
+- `GET /review-items`: Returns all open manual review items from the low-confidence AI extraction queue.
+- `POST /review-items/{id}/resolve`: Resolves a manual review item.
+- `POST /review-items/{id}/dismiss`: Dismisses a manual review item.
+
+---
+
+## 🛠️ Production Enhancements
+
+### 1. Database Migrations (`backend/migrations/`)
+The database schema has versioned SQL migrations located in `backend/migrations/`:
+- `001_initial.sql`: Standard tables for operators, trucks, shipments, messages, and state.
+- `002_timeline_events.sql`: Shipment audit trail logging.
+- `003_driver_pod.sql`: Proof of Delivery and delivery coordinates.
+- `004_outbound_retry_logs.sql`: Notification attempt tracking table.
+- `005_booking_review_queue.sql`: Setup of review queue tables.
+- `006_indexes.sql`: Database query performance optimization.
+- `007_manual_review_queue.sql`: Setup of manual review queue tables.
+
+These should be executed sequentially on your Supabase Postgres instance to sync schemas.
+
+### 2. Driver Acceptance Workflow
+Once a truck is matched to a shipment, the shipment status is set to `DRIVER_PENDING_ACCEPTANCE`, and an assignment request is dispatched via WhatsApp to the driver:
+- Driver replies **YES** (or "haan", "ok"): The status transitions to `DRIVER_ACCEPTED` (and later updates to `CONFIRMED` when EWB is generated).
+- Driver replies **NO** (or "nahi", "reject"): The truck is released, status transitions to `REASSIGNMENT_REQUIRED` (requiring manual or automatic reassignment), and the operator is notified.
+- **Implicit Acceptance**: If the driver sends a status update (e.g. "loaded") without explicitly replying YES, the system automatically logs an implicit acceptance and updates the status.
+
+### 3. WhatsApp Command Menu
+Users can reply with exact keywords to invoke automated flows:
+- `help`: Lists all available commands.
+- `status`: Displays active trip status.
+- `send eway bill`: Sends the draft E-Way Bill PDF.
+- `driver contact`: Shows the driver name, phone, and truck number.
+- `cancel booking`: Operators can cancel active bookings directly via WhatsApp.
+- `change truck`: Triggers a truck reassignment request.
+
+### 4. Failed Notification Retry and Outbound Logs
+All outbound WhatsApp notifications are tracked in `notification_attempts`:
+- Details include destination phone, shipment ID, body, media URLs, status (`SENT`, `SENT_MOCK`, `FAILED`), and retry count.
+- If a message fails, the operator can see the error in the dashboard drawer logs and trigger a retry.
 
 ---
 

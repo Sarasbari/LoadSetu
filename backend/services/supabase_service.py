@@ -48,6 +48,8 @@ MOCK_SHIPMENTS = {}
 MOCK_MESSAGES = []
 MOCK_CONVERSATIONS = {}
 MOCK_SHIPMENT_EVENTS = []
+MOCK_NOTIFICATION_ATTEMPTS = {}
+MOCK_REVIEW_ITEMS = {}
 
 
 def is_mock_active() -> bool:
@@ -438,15 +440,18 @@ def update_shipment_status(
 
 
 def get_active_shipment_for_operator(operator_id: str):
+    active_statuses = [
+        "PENDING", "CONFIRMING", "CONFIRMED", "DRIVER_PENDING_ACCEPTANCE", 
+        "DRIVER_ACCEPTED", "DRIVER_REJECTED", "DRIVER_NOTIFY_FAILED", 
+        "DOCUMENT_FAILED", "REASSIGNMENT_REQUIRED", "LOADED", "IN_TRANSIT", "DELAYED"
+    ]
     if IS_MOCK:
-        # Return most recent pending/confirmed/loaded/transit shipment
-        active_statuses = ["PENDING", "CONFIRMED", "LOADED", "IN_TRANSIT", "DELAYED"]
+        # Return most recent active shipment
         for s in reversed(list(MOCK_SHIPMENTS.values())):
             if s["operator_id"] == operator_id and s["status"] in active_statuses:
                 return s
         return None
     try:
-        active_statuses = ["PENDING", "CONFIRMED", "LOADED", "IN_TRANSIT", "DELAYED"]
         res = supabase_client.table("shipments").select("*")\
             .eq("operator_id", operator_id)\
             .in_("status", active_statuses)\
@@ -461,14 +466,13 @@ def get_active_shipment_for_driver(driver_phone: str):
     if not truck:
         return None
     
+    active_statuses = ["DRIVER_PENDING_ACCEPTANCE", "DRIVER_ACCEPTED", "CONFIRMED", "LOADED", "IN_TRANSIT", "DELAYED"]
     if IS_MOCK:
-        active_statuses = ["CONFIRMED", "LOADED", "IN_TRANSIT", "DELAYED"]
         for s in reversed(list(MOCK_SHIPMENTS.values())):
             if s["truck_id"] == truck["id"] and s["status"] in active_statuses:
                 return s
         return None
     try:
-        active_statuses = ["CONFIRMED", "LOADED", "IN_TRANSIT", "DELAYED"]
         res = supabase_client.table("shipments").select("*")\
             .eq("truck_id", truck["id"])\
             .in_("status", active_statuses)\
@@ -658,4 +662,195 @@ def get_recent_timeline_events(limit: int = 50):
     except Exception as e:
         logger.error(f"Error getting recent timeline events: {e}")
         return sorted(MOCK_SHIPMENT_EVENTS, key=lambda x: x["created_at"], reverse=True)[:limit]
+
+
+# --- Notification Attempts Operations ---
+
+def create_notification_attempt(to_phone: str, shipment_id: str, body: str, media_url: str = None, status: str = "PENDING", provider_sid: str = None, error_message: str = None):
+    now_iso = datetime.datetime.now(IST).isoformat()
+    if IS_MOCK:
+        attempt_id = f"att_{len(MOCK_NOTIFICATION_ATTEMPTS) + 1}"
+        attempt = {
+            "id": attempt_id,
+            "to_phone": to_phone,
+            "shipment_id": shipment_id,
+            "body": body,
+            "media_url": media_url,
+            "status": status,
+            "provider_sid": provider_sid,
+            "error_message": error_message,
+            "created_at": now_iso,
+            "updated_at": now_iso
+        }
+        MOCK_NOTIFICATION_ATTEMPTS[attempt_id] = attempt
+        return attempt
+    try:
+        data = {
+            "to_phone": to_phone,
+            "shipment_id": shipment_id,
+            "body": body,
+            "media_url": media_url,
+            "status": status,
+            "provider_sid": provider_sid,
+            "error_message": error_message
+        }
+        res = supabase_client.table("notification_attempts").insert(data).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        logger.error(f"Error creating notification attempt: {e}")
+        return handle_error(create_notification_attempt, to_phone, shipment_id, body, media_url, status, provider_sid, error_message)
+
+def update_notification_attempt(attempt_id: str, status: str, provider_sid: str = None, error_message: str = None):
+    now_iso = datetime.datetime.now(IST).isoformat()
+    if IS_MOCK:
+        att = MOCK_NOTIFICATION_ATTEMPTS.get(attempt_id)
+        if att:
+            att["status"] = status
+            att["updated_at"] = now_iso
+            if provider_sid is not None:
+                att["provider_sid"] = provider_sid
+            if error_message is not None:
+                att["error_message"] = error_message
+            return att
+        return None
+    try:
+        data = {"status": status, "updated_at": now_iso}
+        if provider_sid is not None:
+            data["provider_sid"] = provider_sid
+        if error_message is not None:
+            data["error_message"] = error_message
+        res = supabase_client.table("notification_attempts").update(data).eq("id", attempt_id).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        logger.error(f"Error updating notification attempt: {e}")
+        return handle_error(update_notification_attempt, attempt_id, status, provider_sid, error_message)
+
+def get_failed_notifications():
+    if IS_MOCK:
+        return [att for att in MOCK_NOTIFICATION_ATTEMPTS.values() if att["status"] == "FAILED"]
+    try:
+        res = supabase_client.table("notification_attempts").select("*").eq("status", "FAILED").order("created_at", desc=True).execute()
+        return res.data
+    except Exception as e:
+        logger.error(f"Error getting failed notification attempts: {e}")
+        return [att for att in MOCK_NOTIFICATION_ATTEMPTS.values() if att["status"] == "FAILED"]
+
+def get_notification_attempt_by_id(attempt_id: str):
+    if IS_MOCK:
+        return MOCK_NOTIFICATION_ATTEMPTS.get(attempt_id)
+    try:
+        res = supabase_client.table("notification_attempts").select("*").eq("id", attempt_id).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        logger.error(f"Error getting notification attempt by id: {e}")
+        return handle_error(get_notification_attempt_by_id, attempt_id)
+
+def get_notifications_for_shipment(shipment_id: str):
+    if IS_MOCK:
+        return [att for att in MOCK_NOTIFICATION_ATTEMPTS.values() if att["shipment_id"] == shipment_id]
+    try:
+        res = supabase_client.table("notification_attempts").select("*").eq("shipment_id", shipment_id).order("created_at", desc=False).execute()
+        return res.data
+    except Exception as e:
+        logger.error(f"Error getting notifications for shipment {shipment_id}: {e}")
+        return [att for att in MOCK_NOTIFICATION_ATTEMPTS.values() if att["shipment_id"] == shipment_id]
+
+
+# --- Manual Review Queue Operations ---
+
+def create_review_item(phone_number: str, status: str = "OPEN", extracted_details: dict = None, missing_fields: list = None, latest_message: str = None):
+    now_iso = datetime.datetime.now(IST).isoformat()
+    if IS_MOCK:
+        item_id = f"rev_{len(MOCK_REVIEW_ITEMS) + 1}"
+        item = {
+            "id": item_id,
+            "phone_number": phone_number,
+            "status": status,
+            "extracted_details": extracted_details or {},
+            "missing_fields": missing_fields or [],
+            "latest_message": latest_message,
+            "created_at": now_iso,
+            "updated_at": now_iso
+        }
+        MOCK_REVIEW_ITEMS[item_id] = item
+        return item
+    try:
+        data = {
+            "phone_number": phone_number,
+            "status": status,
+            "extracted_details": extracted_details or {},
+            "missing_fields": missing_fields or [],
+            "latest_message": latest_message
+        }
+        res = supabase_client.table("booking_review_items").insert(data).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        logger.error(f"Error creating review item: {e}")
+        return handle_error(create_review_item, phone_number, status, extracted_details, missing_fields, latest_message)
+
+def update_review_item(item_id: str, status: str = None, extracted_details: dict = None, missing_fields: list = None, latest_message: str = None):
+    now_iso = datetime.datetime.now(IST).isoformat()
+    if IS_MOCK:
+        item = MOCK_REVIEW_ITEMS.get(item_id)
+        if item:
+            if status is not None:
+                item["status"] = status
+            if extracted_details is not None:
+                item["extracted_details"] = extracted_details
+            if missing_fields is not None:
+                item["missing_fields"] = missing_fields
+            if latest_message is not None:
+                item["latest_message"] = latest_message
+            item["updated_at"] = now_iso
+            return item
+        return None
+    try:
+        data = {"updated_at": now_iso}
+        if status is not None:
+            data["status"] = status
+        if extracted_details is not None:
+            data["extracted_details"] = extracted_details
+        if missing_fields is not None:
+            data["missing_fields"] = missing_fields
+        if latest_message is not None:
+            data["latest_message"] = latest_message
+        res = supabase_client.table("booking_review_items").update(data).eq("id", item_id).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        logger.error(f"Error updating review item: {e}")
+        return handle_error(update_review_item, item_id, status, extracted_details, missing_fields, latest_message)
+
+def get_open_review_items():
+    if IS_MOCK:
+        return [item for item in MOCK_REVIEW_ITEMS.values() if item["status"] == "OPEN"]
+    try:
+        res = supabase_client.table("booking_review_items").select("*").eq("status", "OPEN").order("created_at", desc=True).execute()
+        return res.data
+    except Exception as e:
+        logger.error(f"Error getting open review items: {e}")
+        return [item for item in MOCK_REVIEW_ITEMS.values() if item["status"] == "OPEN"]
+
+def get_review_item_by_phone(phone_number: str):
+    if IS_MOCK:
+        for item in MOCK_REVIEW_ITEMS.values():
+            if item["phone_number"] == phone_number and item["status"] == "OPEN":
+                return item
+        return None
+    try:
+        res = supabase_client.table("booking_review_items").select("*").eq("phone_number", phone_number).eq("status", "OPEN").execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        logger.error(f"Error getting review item by phone: {e}")
+        return None
+
+def get_review_item_by_id(item_id: str):
+    if IS_MOCK:
+        return MOCK_REVIEW_ITEMS.get(item_id)
+    try:
+        res = supabase_client.table("booking_review_items").select("*").eq("id", item_id).execute()
+        return res.data[0] if res.data else None
+    except Exception as e:
+        logger.error(f"Error getting review item by id: {e}")
+        return handle_error(get_review_item_by_id, item_id)
+
 

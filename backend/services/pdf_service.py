@@ -1,5 +1,7 @@
 import io
 import logging
+import re
+import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -7,6 +9,39 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from services import supabase_service
 
 logger = logging.getLogger(__name__)
+
+def clean_for_pdf(text: str) -> str:
+    """Replaces emojis and high-unicode symbols with ASCII-safe equivalents for ReportLab safety."""
+    if not text:
+        return ""
+    text = str(text)
+    # Replace Rupee symbol
+    text = text.replace("₹", "Rs. ")
+    text = text.replace("â‚¹", "Rs. ")
+    # Replace common emojis/symbols
+    replacements = {
+        "✅": "[OK]", "âœ…": "[OK]",
+        "❌": "[ERROR]",
+        "🚨": "[ALERT]", "ðŸš¨": "[ALERT]",
+        "🙏": "[NAMASTE]", "ðŸ™": "[NAMASTE]",
+        "⚠️": "[WARNING]", "âš ": "[WARNING]",
+        "➔": "->", "âž”": "->",
+        "➜": "->",
+        "ℹ️": "[INFO]", "ℹ": "[INFO]", "â„¹": "[INFO]",
+        "🎉": "[CONGRATS]",
+        "ℹ️": "[INFO]"
+    }
+    for emoji, replacement in replacements.items():
+        text = text.replace(emoji, replacement)
+        
+    # Remove other characters above code 255 to prevent Helvetica failures
+    cleaned = []
+    for char in text:
+        if ord(char) > 255:
+            cleaned.append(" ")
+        else:
+            cleaned.append(char)
+    return "".join(cleaned)
 
 def generate_ewb_pdf(ewb_dict: dict, shipment_id: str) -> str:
     """Generates a professional E-Way Bill draft PDF and uploads it to Supabase storage.
@@ -85,10 +120,10 @@ def generate_ewb_pdf(ewb_dict: dict, shipment_id: str) -> str:
     
     # 2. Main Metadata Table (Transaction & Document details)
     meta_data = [
-        [Paragraph("Document Type", body_style), Paragraph(ewb_dict.get("document_type", ""), body_style),
-         Paragraph("Transaction Type", body_style), Paragraph(ewb_dict.get("transaction_type", ""), body_style)],
-        [Paragraph("Scheduled Date", body_style), Paragraph(ewb_dict.get("scheduled_date", ""), body_style),
-         Paragraph("Shipment ID", body_style), Paragraph(str(shipment_id), body_style)]
+        [Paragraph("Document Type", body_style), Paragraph(clean_for_pdf(ewb_dict.get("document_type", "")), body_style),
+         Paragraph("Transaction Type", body_style), Paragraph(clean_for_pdf(ewb_dict.get("transaction_type", "")), body_style)],
+        [Paragraph("Scheduled Date", body_style), Paragraph(clean_for_pdf(ewb_dict.get("scheduled_date", "")), body_style),
+         Paragraph("Shipment ID", body_style), Paragraph(clean_for_pdf(str(shipment_id)), body_style)]
     ]
     t_meta = Table(meta_data, colWidths=[120, 150, 120, 140])
     t_meta.setStyle(TableStyle([
@@ -107,15 +142,15 @@ def generate_ewb_pdf(ewb_dict: dict, shipment_id: str) -> str:
         [Paragraph("CONSIGNOR (Sender)", header_cell_style), Paragraph("CONSIGNEE (Receiver)", header_cell_style)],
         [
             Paragraph(
-                f"<b>{ewb_dict.get('consignor_name', '')}</b><br/>"
+                clean_for_pdf(f"<b>{ewb_dict.get('consignor_name', '')}</b><br/>"
                 f"GSTIN: {ewb_dict.get('consignor_gstin', '')}<br/>"
-                f"Address: {ewb_dict.get('consignor_address', '')}", 
+                f"Address: {ewb_dict.get('consignor_address', '')}"), 
                 body_style
             ),
             Paragraph(
-                f"<b>{ewb_dict.get('consignee_name', '')}</b><br/>"
+                clean_for_pdf(f"<b>{ewb_dict.get('consignee_name', '')}</b><br/>"
                 f"GSTIN: {ewb_dict.get('consignee_gstin', '')}<br/>"
-                f"Address: {ewb_dict.get('consignee_address', '')}", 
+                f"Address: {ewb_dict.get('consignee_address', '')}"), 
                 body_style
             )
         ]
@@ -137,10 +172,10 @@ def generate_ewb_pdf(ewb_dict: dict, shipment_id: str) -> str:
         [Paragraph("Description", header_cell_style), Paragraph("HSN Code", header_cell_style), 
          Paragraph("Weight (Tons)", header_cell_style), Paragraph("Estimated Value (INR)", header_cell_style)],
         [
-            Paragraph(ewb_dict.get("cargo_description", ""), body_style),
-            Paragraph(ewb_dict.get("hsn_code", ""), body_style),
-            Paragraph(f"{ewb_dict.get('weight_tons', 0.0):.2f}", body_style),
-            Paragraph(f"Rs. {ewb_dict.get('cargo_value_inr', 0):,}", body_style)
+            Paragraph(clean_for_pdf(ewb_dict.get("cargo_description", "")), body_style),
+            Paragraph(clean_for_pdf(ewb_dict.get("hsn_code", "")), body_style),
+            Paragraph(clean_for_pdf(f"{ewb_dict.get('weight_tons', 0.0):.2f}"), body_style),
+            Paragraph(clean_for_pdf(f"Rs. {ewb_dict.get('cargo_value_inr', 0):,}"), body_style)
         ]
     ]
     t_goods = Table(goods_data, colWidths=[200, 100, 100, 130])
@@ -157,11 +192,11 @@ def generate_ewb_pdf(ewb_dict: dict, shipment_id: str) -> str:
     story.append(Paragraph("PART C — TRANSPORTATION DETAILS (PART-B)", h2_style))
     
     trans_data = [
-        [Paragraph("Vehicle Number", body_style), Paragraph(ewb_dict.get("truck_number", ""), body_style),
-         Paragraph("Place of Origin", body_style), Paragraph(ewb_dict.get("origin_place", ""), body_style)],
-        [Paragraph("Driver Name", body_style), Paragraph(ewb_dict.get("driver_name", ""), body_style),
-         Paragraph("Place of Destination", body_style), Paragraph(ewb_dict.get("destination_place", ""), body_style)],
-        [Paragraph("Driver Phone", body_style), Paragraph(ewb_dict.get("driver_phone", ""), body_style),
+        [Paragraph("Vehicle Number", body_style), Paragraph(clean_for_pdf(ewb_dict.get("truck_number", "")), body_style),
+         Paragraph("Place of Origin", body_style), Paragraph(clean_for_pdf(ewb_dict.get("origin_place", "")), body_style)],
+        [Paragraph("Driver Name", body_style), Paragraph(clean_for_pdf(ewb_dict.get("driver_name", "")), body_style),
+         Paragraph("Place of Destination", body_style), Paragraph(clean_for_pdf(ewb_dict.get("destination_place", "")), body_style)],
+        [Paragraph("Driver Phone", body_style), Paragraph(clean_for_pdf(ewb_dict.get("driver_phone", "")), body_style),
          Paragraph("Estimated Freight Cost", body_style), Paragraph(f"Calculated in Booking", body_style)]
     ]
     t_trans = Table(trans_data, colWidths=[130, 140, 130, 130])
@@ -272,12 +307,12 @@ def generate_dispute_pack_pdf(shipment: dict, operator: dict, truck: dict, event
     # 2. Main Shipment Details
     story.append(Paragraph("1. TRIP SUMMARY", h2_style))
     summary_data = [
-        [Paragraph("Origin", body_style), Paragraph(shipment.get("origin", "N/A"), body_style),
-         Paragraph("Destination", body_style), Paragraph(shipment.get("destination", "N/A"), body_style)],
-        [Paragraph("Cargo Type", body_style), Paragraph(shipment.get("cargo_type", "N/A"), body_style),
-         Paragraph("Weight (Tons)", body_style), Paragraph(f"{shipment.get('weight_tons', 0.0):.2f}", body_style)],
-        [Paragraph("Scheduled Date", body_style), Paragraph(shipment.get("scheduled_date", "N/A"), body_style),
-         Paragraph("Current Status", body_style), Paragraph(shipment.get("status", "N/A"), body_style)]
+        [Paragraph("Origin", body_style), Paragraph(clean_for_pdf(shipment.get("origin", "N/A")), body_style),
+         Paragraph("Destination", body_style), Paragraph(clean_for_pdf(shipment.get("destination", "N/A")), body_style)],
+        [Paragraph("Cargo Type", body_style), Paragraph(clean_for_pdf(shipment.get("cargo_type", "N/A")), body_style),
+         Paragraph("Weight (Tons)", body_style), Paragraph(clean_for_pdf(f"{shipment.get('weight_tons', 0.0):.2f}"), body_style)],
+        [Paragraph("Scheduled Date", body_style), Paragraph(clean_for_pdf(shipment.get("scheduled_date", "N/A")), body_style),
+         Paragraph("Current Status", body_style), Paragraph(clean_for_pdf(shipment.get("status", "N/A")), body_style)]
     ]
     t_summary = Table(summary_data, colWidths=[120, 150, 120, 140])
     t_summary.setStyle(TableStyle([
@@ -294,15 +329,15 @@ def generate_dispute_pack_pdf(shipment: dict, operator: dict, truck: dict, event
         [Paragraph("OPERATOR (Shipper)", header_cell_style), Paragraph("DRIVER & TRUCK", header_cell_style)],
         [
             Paragraph(
-                f"<b>Business Name:</b> {operator.get('business_name') or 'N/A'}<br/>"
+                clean_for_pdf(f"<b>Business Name:</b> {operator.get('business_name') or 'N/A'}<br/>"
                 f"<b>Phone:</b> {operator.get('phone') or 'N/A'}<br/>"
-                f"<b>City:</b> {operator.get('city') or 'N/A'}", 
+                f"<b>City:</b> {operator.get('city') or 'N/A'}"), 
                 body_style
             ),
             Paragraph(
-                f"<b>Driver Name:</b> {truck.get('driver_name') or 'N/A'}<br/>"
+                clean_for_pdf(f"<b>Driver Name:</b> {truck.get('driver_name') or 'N/A'}<br/>"
                 f"<b>Driver Phone:</b> {truck.get('driver_phone') or 'N/A'}<br/>"
-                f"<b>Truck Number:</b> {truck.get('truck_number') or 'N/A'}", 
+                f"<b>Truck Number:</b> {truck.get('truck_number') or 'N/A'}"), 
                 body_style
             )
         ]
@@ -319,10 +354,10 @@ def generate_dispute_pack_pdf(shipment: dict, operator: dict, truck: dict, event
     # 4. Proof of Delivery (POD) Details
     story.append(Paragraph("3. PROOF OF DELIVERY (POD)", h2_style))
     pod_data = [
-        [Paragraph("POD Status", body_style), Paragraph(shipment.get("pod_status") or "PENDING", body_style),
-         Paragraph("Received At", body_style), Paragraph(shipment.get("pod_received_at") or "N/A", body_style)],
-        [Paragraph("Driver Note", body_style), Paragraph(shipment.get("pod_note") or "No note submitted", body_style),
-         Paragraph("POD Attachment URL", body_style), Paragraph(shipment.get("pod_media_url") or "No document attached", body_style)]
+        [Paragraph("POD Status", body_style), Paragraph(clean_for_pdf(shipment.get("pod_status") or "PENDING"), body_style),
+         Paragraph("Received At", body_style), Paragraph(clean_for_pdf(shipment.get("pod_received_at") or "N/A"), body_style)],
+        [Paragraph("Driver Note", body_style), Paragraph(clean_for_pdf(shipment.get("pod_note") or "No note submitted"), body_style),
+         Paragraph("POD Attachment URL", body_style), Paragraph(clean_for_pdf(shipment.get("pod_media_url") or "No document attached"), body_style)]
     ]
     t_pod = Table(pod_data, colWidths=[120, 150, 120, 140])
     t_pod.setStyle(TableStyle([
@@ -341,9 +376,9 @@ def generate_dispute_pack_pdf(shipment: dict, operator: dict, truck: dict, event
         if "T" in time_str:
             time_str = time_str.split("T")[0] + " " + time_str.split("T")[1][:8]
         timeline_rows.append([
-            Paragraph(time_str, body_style),
-            Paragraph(ev.get("title", ""), body_style),
-            Paragraph(ev.get("description", "") or "", body_style)
+            Paragraph(clean_for_pdf(time_str), body_style),
+            Paragraph(clean_for_pdf(ev.get("title", "")), body_style),
+            Paragraph(clean_for_pdf(ev.get("description", "") or ""), body_style)
         ])
     if len(timeline_rows) == 1:
         timeline_rows.append([Paragraph("No events", body_style), Paragraph("-", body_style), Paragraph("-", body_style)])
@@ -378,9 +413,9 @@ def generate_dispute_pack_pdf(shipment: dict, operator: dict, truck: dict, event
         sender_role = "OPERATOR" if m.get("phone_number", "").replace("+91", "").strip() == op_phone else "DRIVER"
         sender_label = f"{sender_role} ({m.get('direction', 'INBOUND')})"
         chat_rows.append([
-            Paragraph(time_str, body_style),
-            Paragraph(sender_label, body_style),
-            Paragraph(m.get("body", ""), body_style)
+            Paragraph(clean_for_pdf(time_str), body_style),
+            Paragraph(clean_for_pdf(sender_label), body_style),
+            Paragraph(clean_for_pdf(m.get("body", "")), body_style)
         ])
         
     if len(chat_rows) == 1:
@@ -425,4 +460,3 @@ def generate_dispute_pack_pdf(shipment: dict, operator: dict, truck: dict, event
     # Upload to Supabase and return public URL
     pdf_url = supabase_service.upload_ewb_pdf_bytes(f"dispute_pack_{shipment['id']}", pdf_bytes)
     return pdf_url
-
