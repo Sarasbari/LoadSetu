@@ -186,12 +186,12 @@ All dashboard endpoints require authorization via `Authorization: Bearer <ADMIN_
 ### 1. Database Migrations (`backend/migrations/`)
 The database schema has versioned SQL migrations located in `backend/migrations/`:
 - `001_initial.sql`: Standard tables for operators, trucks, shipments, messages, and state.
-- `002_timeline_events.sql`: Shipment audit trail logging.
-- `003_driver_pod.sql`: Proof of Delivery and delivery coordinates.
-- `004_outbound_retry_logs.sql`: Notification attempt tracking table.
-- `005_booking_review_queue.sql`: Setup of review queue tables.
-- `006_indexes.sql`: Database query performance optimization.
-- `007_manual_review_queue.sql`: Setup of manual review queue tables.
+- `002_shipment_events.sql`: Shipment audit trail logging.
+- `003_pod_and_ai_fields.sql`: Proof of Delivery and AI details.
+- `004_message_idempotency.sql`: Message idempotency via message_sid.
+- `005_operator_onboarding.sql`: Operator onboarding status.
+- `006_notification_attempts.sql`: Notification attempt tracking.
+- `007_manual_review_queue.sql`: Manual review queue table setup.
 
 These should be executed sequentially on your Supabase Postgres instance to sync schemas.
 

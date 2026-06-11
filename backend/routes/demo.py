@@ -2,9 +2,8 @@ import os
 import logging
 import datetime
 from fastapi import APIRouter, Header, HTTPException, status
-from services import supabase_service, twilio_service
+from services import supabase_service, twilio_service, booking_service
 from routes.shipments import verify_admin_token
-from routes.webhook import handle_confirmation
 from agents import matching_agent
 from utils import conversation_state
 
@@ -180,7 +179,7 @@ async def simulate_confirm(authorization: str = Header(None)):
         )
         
     # Process confirmation for Option 1
-    handle_confirmation(
+    booking_service.handle_confirmation(
         from_whatsapp=f"whatsapp:{phone}",
         clean_phone=phone,
         body="1",

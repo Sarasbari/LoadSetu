@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS trucks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     driver_name TEXT NOT NULL,
     driver_phone TEXT NOT NULL,
-    truck_number TEXT NOT NULL,               -- e.g. MH-15-AB-1234
+    truck_number TEXT UNIQUE NOT NULL,               -- e.g. MH-15-AB-1234
     truck_type TEXT,                        -- open/closed/refrigerated/flatbed
     capacity_tons DECIMAL(5,2),
     home_city TEXT,                        -- Base location of truck

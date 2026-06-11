@@ -227,18 +227,24 @@ async def reassign_shipment(
             detail="No other available trucks found matching requirements."
         )
         
+    # Update shipment status and truck assignment
+    # Generate new EWB fields
+    operator = supabase_service.get_operator_by_id(shipment.get("operator_id"))
+    try:
+        ewb_fields = document_agent.build_ewb_draft(shipment, operator, new_truck)
+        pdf_url = pdf_service.generate_ewb_pdf(ewb_fields, shipment_id)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate EWB PDF for new truck: {e}"
+        )
+
     # Release old truck
     if old_truck_id:
         supabase_service.update_truck_availability(old_truck_id, is_available=True)
         
     # Lock new truck
     supabase_service.update_truck_availability(new_truck["id"], is_available=False, current_city=origin)
-    
-    # Update shipment status and truck assignment
-    # Generate new EWB fields
-    operator = supabase_service.get_operator_by_id(shipment.get("operator_id"))
-    ewb_fields = document_agent.build_ewb_draft(shipment, operator, new_truck)
-    pdf_url = pdf_service.generate_ewb_pdf(ewb_fields, shipment_id)
     
     # Update shipment in DB
     supabase_service.update_shipment_status(
@@ -288,18 +294,45 @@ async def reassign_shipment(
         "Trip accept karne ke liye reply karein: YES\n"
         "Reject karne ke liye reply karein: NO"
     )
-    notification_service.send_whatsapp(driver_whatsapp, driver_assignment_msg, shipment_id=shipment_id)
+    driver_notified = notification_service.send_whatsapp(driver_whatsapp, driver_assignment_msg, shipment_id=shipment_id)
     
-    # Notify operator
-    if operator:
-        notification_service.send_whatsapp(
-            to_phone=f"whatsapp:{operator['phone']}",
-            body=f"🔄 TRUCK REASSIGNED\n\nTrip ID: {shipment_id[:8].upper()} has been reassigned to {new_truck['truck_number']} (Driver: {new_truck['driver_name']}). Waiting for driver acceptance.",
+    final_status = "DRIVER_PENDING_ACCEPTANCE"
+    
+    if not driver_notified:
+        final_status = "DRIVER_NOTIFY_FAILED"
+        supabase_service.update_shipment_status(shipment_id, "DRIVER_NOTIFY_FAILED")
+        supabase_service.create_timeline_event(
             shipment_id=shipment_id,
-            media_url=pdf_url
+            phone_number=new_truck["driver_phone"],
+            event_type="driver_notification_failed",
+            title="Driver Notification Failed",
+            description=f"Could not reach driver {new_truck['driver_name']} ({new_truck['driver_phone']}) during reassignment."
         )
+        if operator:
+            notification_service.send_whatsapp(
+                to_phone=f"whatsapp:{operator['phone']}",
+                body=f"⚠️ Driver Notification Fail (Reassignment)!\nTrip ID {shipment_id[:8].upper()} reassigned to {new_truck['truck_number']} but driver {new_truck['driver_name']} could not be reached.",
+                shipment_id=shipment_id
+            )
+    else:
+        # Log driver notified successfully
+        supabase_service.create_timeline_event(
+            shipment_id=shipment_id,
+            phone_number=new_truck["driver_phone"],
+            event_type="driver_notified",
+            title="Driver Notified",
+            description=f"Notification sent to new driver {new_truck['driver_name']}"
+        )
+        # Notify operator
+        if operator:
+            notification_service.send_whatsapp(
+                to_phone=f"whatsapp:{operator['phone']}",
+                body=f"🔄 TRUCK REASSIGNED\n\nTrip ID: {shipment_id[:8].upper()} has been reassigned to {new_truck['truck_number']} (Driver: {new_truck['driver_name']}). Waiting for driver acceptance.",
+                shipment_id=shipment_id,
+                media_url=pdf_url
+            )
         
-    return {"message": "Shipment reassigned successfully", "status": "DRIVER_PENDING_ACCEPTANCE", "truck": new_truck}
+    return {"message": "Shipment reassigned successfully", "status": final_status, "truck": new_truck}
 
 
 
