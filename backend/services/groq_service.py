@@ -177,6 +177,16 @@ def get_mock_response(system_prompt: str, user_message: str) -> str:
             data["cargo_type"] = "Chemicals"
         elif "steel" in user_msg_lower:
             data["cargo_type"] = "Steel"
+        elif "sugar" in user_msg_lower or "chini" in user_msg_lower:
+            data["cargo_type"] = "Sugar"
+        elif "cotton" in user_msg_lower or "ruyi" in user_msg_lower:
+            data["cargo_type"] = "Cotton"
+        elif "fertilizer" in user_msg_lower or "khad" in user_msg_lower:
+            data["cargo_type"] = "Fertilizer"
+        elif "plastic" in user_msg_lower:
+            data["cargo_type"] = "Plastics"
+        elif "fruit" in user_msg_lower or "phhal" in user_msg_lower:
+            data["cargo_type"] = "Fruits"
             
         # Weight
         import re

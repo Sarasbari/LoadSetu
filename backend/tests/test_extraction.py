@@ -24,6 +24,16 @@ TEST_CASES = [
         "expected_intent": "NEW_BOOKING",
         "verify_details": lambda d: d["origin"] == "Delhi" and d["destination"] == "Ludhiana" and d["cargo_type"] == "Steel" and d["weight_tons"] == 15.0
     },
+    {
+        "input": ["Nashik se Mumbai 10 ton chini kal ke liye"],
+        "expected_intent": "NEW_BOOKING",
+        "verify_details": lambda d: d["origin"] == "Nashik" and d["destination"] == "Mumbai" and d["cargo_type"] == "Sugar" and d["weight_tons"] == 10.0
+    },
+    {
+        "input": ["surat se pune 5 ton ruyi chahiye"],
+        "expected_intent": "NEW_BOOKING",
+        "verify_details": lambda d: d["origin"] == "Surat" and d["destination"] == "Pune" and d["cargo_type"] == "Cotton" and d["weight_tons"] == 5.0
+    },
     
     # NEW_BOOKING Partial & Follow-up Cases
     {

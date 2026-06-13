@@ -29,6 +29,17 @@ HSN_CODES = {
     "coal": "27011100",
     "electronic": "85176290",
     "electronics": "85176290",
+    "sugar": "17011190",
+    "chini": "17011190",
+    "cotton": "52010015",
+    "ruyi": "52010015",
+    "fertilizer": "31021000",
+    "khad": "31021000",
+    "plastic": "39159090",
+    "plastics": "39159090",
+    "fruit": "08109090",
+    "fruits": "08109090",
+    "phhal": "08109090",
 }
 
 # Estimated values in INR per ton for different cargo types
@@ -58,6 +69,17 @@ VALUE_PER_TON = {
     "coal": 10000,
     "electronic": 800000,
     "electronics": 800000,
+    "sugar": 40000,
+    "chini": 40000,
+    "cotton": 160000,
+    "ruyi": 160000,
+    "fertilizer": 25000,
+    "khad": 25000,
+    "plastic": 95000,
+    "plastics": 95000,
+    "fruit": 60000,
+    "fruits": 60000,
+    "phhal": 60000,
 }
 
 def infer_hsn_code(cargo_type: str) -> str:
